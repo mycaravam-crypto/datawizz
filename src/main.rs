@@ -18,7 +18,7 @@ struct AppState {
     timeout_ms: u64,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct ApiError {
     error: String,
 }
