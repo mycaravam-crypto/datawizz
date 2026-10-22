@@ -788,6 +788,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn mutation_endpoints_immediately_visible_on_next_table_fetch() {
+        let Some(state) = test_state(200, 10_000) else { return; };
+        let client = connect(&state).await.expect("connect");
+        client.batch_execute(
+            "CREATE TABLE public.datawizz_live_edit_test (id integer PRIMARY KEY, label text);
+             INSERT INTO public.datawizz_live_edit_test VALUES (1, 'before')"
+        ).await.expect("seed");
+        let page = || PageRequest {
+            schema:"public".into(),table:"datawizz_live_edit_test".into(),
+            offset:Some(0),limit:Some(20)
+        };
+        let Json(initial)=table_rows(State(state.clone()),Query(page())).await.expect("initial");
+        assert_eq!(initial.rows[0][1].as_deref(),Some("before"));
+        let original=vec![Some("1".into()),Some("before".into())];
+        let changed=vec![Some("1".into()),Some("after".into())];
+        change_row(State(state.clone()),Json(RowChange{
+            schema:"public".into(),table:"datawizz_live_edit_test".into(),
+            original:original.clone(),values:Some(changed.clone()),delete:false
+        })).await.expect("update");
+        let Json(updated)=table_rows(State(state.clone()),Query(page())).await.expect("refetch update");
+        assert_eq!(updated.rows[0][1].as_deref(),Some("after"));
+        let Err((code,_))=change_row(State(state.clone()),Json(RowChange{
+            schema:"public".into(),table:"datawizz_live_edit_test".into(),
+            original:original.clone(),values:Some(changed.clone()),delete:false
+        })).await else {panic!("stale update must conflict")};
+        assert_eq!(code,StatusCode::CONFLICT);
+        let Json(still_updated)=table_rows(State(state.clone()),Query(page())).await.expect("refetch after conflict");
+        assert_eq!(still_updated.rows[0][1].as_deref(),Some("after"));
+        insert_row(State(state.clone()),Json(InsertRow{
+            schema:"public".into(),table:"datawizz_live_edit_test".into(),
+            fields:vec![InsertField{column:"id".into(),value:Some("2".into())},
+                        InsertField{column:"label".into(),value:Some("inserted".into())}]
+        })).await.expect("insert");
+        let Json(inserted)=table_rows(State(state.clone()),Query(page())).await.expect("refetch insert");
+        assert_eq!(inserted.rows.len(),2);
+        assert_eq!(inserted.rows[1][1].as_deref(),Some("inserted"));
+        change_row(State(state.clone()),Json(RowChange{
+            schema:"public".into(),table:"datawizz_live_edit_test".into(),
+            original:changed,values:None,delete:true
+        })).await.expect("delete");
+        let Json(deleted)=table_rows(State(state.clone()),Query(page())).await.expect("refetch delete");
+        assert_eq!(deleted.rows.len(),1);
+        assert_eq!(deleted.rows[0][0].as_deref(),Some("2"));
+        client.batch_execute("DROP TABLE public.datawizz_live_edit_test").await.expect("cleanup");
+    }
+
+    #[tokio::test]
     async fn table_pagination_reads_multiple_pages() {
         let Some(state) = test_state(200, 10_000) else { return; };
         let client = connect(&state).await.expect("connect");

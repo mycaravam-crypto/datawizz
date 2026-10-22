@@ -5,6 +5,7 @@ const fs = require("node:fs");
 const { chromium } = require("playwright");
 
 const html = fs.readFileSync("web/index.html", "utf8");
+let rejectNextChangeset = false;
 const server = http.createServer(async (req, res) => {
   res.setHeader("Content-Type", "application/json; charset=utf-8");
   if (req.url === "/") {
@@ -25,7 +26,11 @@ const server = http.createServer(async (req, res) => {
     assert.deepEqual(payload.original,["1","original"]);
     assert.deepEqual(payload.values,["1","updated"]);
     res.end(JSON.stringify({affected:1}));
+  } else if (req.url === "/api/test-conflict") {
+    rejectNextChangeset = true;
+    res.end(JSON.stringify({enabled:true}));
   } else if (req.url === "/api/changeset") {
+    if (rejectNextChangeset) {rejectNextChangeset=false;res.writeHead(409);res.end(JSON.stringify({error:"Stale row conflict"}));return;}
     let body=""; for await(const chunk of req) body+=chunk;
     const payload=JSON.parse(body);
     assert.equal(payload.schema,"public");
@@ -124,7 +129,19 @@ const server = http.createServer(async (req, res) => {
     await page.getByText(/Row updated; changes visible immediately/).waitFor();
     await page.locator("#server-next").click();
     await page.locator("#server-page-info").getByText(/Database rows 101/).waitFor();
+    await page.evaluate(()=>fetch("/api/test-conflict"));
+    await page.locator("#browse").click();
+    await page.locator("#output .editable-cell").first().dblclick();
+    await page.locator("#output .cell-editor").fill("retry-value");
+    await page.locator("#output .cell-editor").press("Enter");
+    await page.locator("#changes-save").click();
+    await page.locator("#changes-review-confirm").click();
+    await page.getByText(/No staged rows committed/).waitFor();
+    await page.locator("#changes-count").getByText("1 pending row").waitFor();
+    assert.equal(await page.locator("#output .pending-cell").count(),1,"Conflict retains draft");
+    page.once("dialog",dialog=>dialog.accept());
     await page.getByRole("button",{name:"Run query",exact:false}).click();
+    await page.locator("#server-pager").waitFor({state:"hidden"});
     assert.equal(await page.locator("#server-pager").isVisible(),false,"Free SQL hides server pager");
     console.log("Chromium workbench UI smoke tests passed");
   } finally {await browser.close();}
