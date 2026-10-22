@@ -86,7 +86,7 @@ function csvValue(v){
  let value=String(v??"");
  // Spreadsheet programs may interpret these prefixes as executable formulas.
  // Prefix a single quote before CSV quoting, including whitespace-prefixed formulas.
- if(/^[\\s\\uFEFF\\u200B]*[=+@-]/u.test(value))value="'"+value;
+ if(/^[\s\uFEFF\u200B]*[=+@-]/u.test(value))value="'"+value;
  return '"'+value.replaceAll('"','""')+'"';
 }
 $("csv").onclick=()=>{if(!last||!last.columns.length)return;const lines=[last.columns,...last.rows].map(r=>r.map(csvValue).join(","));const blob=new Blob(["\uFEFF"+lines.join("\r\n")],{type:"text/csv;charset=utf-8"});const url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download="datawizz-loaded-rows.csv";document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000)};
