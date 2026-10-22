@@ -1,55 +1,100 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Datawizz</title>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>Datawizz · SQL Workbench</title>
 <style>
-:root{color-scheme:dark;font:14px system-ui,sans-serif;background:#10151d;color:#e1e7ef}
-*{box-sizing:border-box}body{margin:0}header{padding:14px 18px;border-bottom:1px solid #354154;font-weight:700}
-main{display:grid;grid-template-columns:245px minmax(0,1fr);height:calc(100vh - 51px)}
-aside{border-right:1px solid #354154;overflow:auto;padding:12px}
-section{display:flex;flex-direction:column;min-width:0;padding:12px;gap:10px}
-button{background:#253347;color:#e1e7ef;border:1px solid #42536a;border-radius:5px;padding:7px 11px;cursor:pointer}
-button:hover{background:#354962}button:disabled{opacity:.55;cursor:wait}
-.object{display:block;width:100%;text-align:left;overflow:hidden;text-overflow:ellipsis;margin:3px 0}
-h3{font-size:13px;color:#9bacc2;margin:10px 0}
-textarea{width:100%;min-height:150px;resize:vertical;background:#161f2b;color:#e1e7ef;border:1px solid #42536a;padding:12px;font:13px/1.5 ui-monospace,monospace;border-radius:6px}
-.controls{display:flex;align-items:center;gap:12px}.muted{color:#9bacc2}
-#output{overflow:auto;flex:1;border:1px solid #354154;border-radius:6px}
-table{border-collapse:collapse;min-width:100%;white-space:pre}td,th{border-bottom:1px solid #304055;padding:8px 12px;text-align:left}
-th{background:#253347;position:sticky;top:0}td{max-width:400px;overflow:hidden;text-overflow:ellipsis}
-.null{font-style:italic;color:#8b9caf}#message{white-space:pre-wrap} .error{color:#ff9e9e}
-@media(max-width:650px){main{grid-template-columns:150px minmax(0,1fr)}}
-</style></head><body><header>Datawizz <span class="muted">/ PostgreSQL</span></header>
-<main><aside><h3>DATABASE OBJECTS</h3><div id="objects">Loading…</div><h3>COLUMNS</h3><div id="columns" class="muted">Select an object</div></aside>
-<section><label for="sql">SQL editor</label><textarea id="sql" spellcheck="false">SELECT current_database(), version();</textarea>
-<div class="controls"><button id="run">Run (Ctrl/⌘+Enter)</button><button id="csv" disabled>Export loaded CSV</button><span id="message" class="muted"></span></div>
-<div id="output" aria-live="polite"></div></section></main>
+:root{font:14px/1.5 Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif;color-scheme:dark;--bg:#0c1019;--panel:#121a28;--raised:#1a2535;--hover:#223149;--border:#2b3950;--text:#eef4ff;--muted:#a8bad0;--accent:#8eabff;--accent-bg:#304b8d;--success:#75ddaa;--danger:#ffaaa8;--warn:#ffd18a;--shadow:0 12px 34px #05091155}
+:root[data-theme="light"]{color-scheme:light;--bg:#f2f5fb;--panel:#ffffff;--raised:#edf2fa;--hover:#e3eaf5;--border:#ccd7e5;--text:#19253a;--muted:#53657c;--accent:#274dbe;--accent-bg:#d9e4ff;--success:#176e48;--danger:#ab2935;--warn:#8b5510;--shadow:0 12px 34px #243e621a}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text)}button,input,select,textarea{font:inherit}button{cursor:pointer}button:disabled{cursor:not-allowed;opacity:.52}button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.topbar{height:70px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 24px;background:var(--panel);gap:12px}.brand{display:flex;align-items:center;gap:12px;font-size:20px;font-weight:750;letter-spacing:-.5px}.logo{width:38px;height:38px;border-radius:12px;background:linear-gradient(145deg,#7195ff,#725ce5);display:grid;place-items:center;color:white;font-size:22px}.top-actions{display:flex;align-items:center;gap:10px}.tag{font-size:12px;padding:5px 9px;border:1px solid var(--border);border-radius:99px;color:var(--muted)}.app{display:grid;grid-template-columns:285px minmax(0,1fr);min-height:calc(100vh - 70px)}
+.sidebar{background:var(--panel);border-right:1px solid var(--border);padding:20px 14px;min-width:0}.aside-heading{display:flex;align-items:center;justify-content:space-between;margin:4px 5px 14px}.eyebrow{font-size:11px;letter-spacing:.12em;text-transform:uppercase;font-weight:750;color:var(--muted)}.count{color:var(--muted);font-size:12px}.input{width:100%;padding:10px 12px;background:var(--raised);border:1px solid var(--border);border-radius:9px;color:var(--text);min-width:0}.search{margin-bottom:14px}.tree{max-height:calc(100vh - 370px);min-height:160px;overflow:auto}.tree details{margin-bottom:7px}.tree summary{padding:7px 9px;border-radius:8px;color:var(--muted);font-weight:650;cursor:pointer;overflow-wrap:anywhere}.tree summary:hover{background:var(--hover)}.object{display:block;width:100%;text-align:left;border:0;background:transparent;color:var(--text);padding:8px 10px 8px 21px;border-radius:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.object:hover{background:var(--hover)}.object.selected{background:var(--accent-bg);color:var(--accent);font-weight:700}.object-kind{color:var(--muted);margin-right:7px}.sidebar-bottom{border-top:1px solid var(--border);margin-top:18px;padding:16px 5px 0}.column-list{font-size:12px;color:var(--muted);max-height:160px;overflow:auto}.column-item{padding:6px 2px;border-bottom:1px solid var(--border);overflow-wrap:anywhere}.column-item strong{font-weight:600;color:var(--text);margin-right:6px}
+.workbench{min-width:0;padding:24px;display:flex;flex-direction:column;gap:18px;max-width:1800px;width:100%;margin:auto}.page-heading{display:flex;justify-content:space-between;gap:15px;align-items:flex-end}.page-heading h1{font-size:27px;line-height:1.2;letter-spacing:-.7px;margin:4px 0}.subtext{margin:0;color:var(--muted);font-size:13px}.card{background:var(--panel);border:1px solid var(--border);border-radius:14px;overflow:hidden;box-shadow:var(--shadow)}.card-header{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:15px 18px;border-bottom:1px solid var(--border)}.card-title{margin:0;font-size:15px;font-weight:700}.buttons{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.btn{border:1px solid var(--border);background:var(--raised);color:var(--text);padding:8px 12px;border-radius:8px;font-weight:650}.btn:hover:not(:disabled){background:var(--hover)}.btn.primary{background:var(--accent);color:var(--bg);border-color:transparent}.btn.primary:hover:not(:disabled){filter:brightness(1.08)}.btn.small{padding:5px 9px;font-size:12px}.editor-wrap{padding:15px 18px}.editor{display:block;width:100%;min-height:180px;max-height:55vh;resize:vertical;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:15px 17px;border-radius:10px;font:13px/1.65 ui-monospace,SFMono-Regular,Consolas,monospace;tab-size:2}.toolbar{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-top:12px}.helper{font-size:12px;color:var(--muted)}kbd{border:1px solid var(--border);border-radius:4px;padding:1px 5px;font:11px ui-monospace,monospace;color:var(--muted)}.results{display:flex;flex-direction:column;min-height:280px}.results-header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;padding:15px 18px;border-bottom:1px solid var(--border)}.stats{display:flex;flex-wrap:wrap;align-items:center;gap:8px}.stat{font-size:12px;color:var(--muted);background:var(--raised);border-radius:6px;padding:5px 9px}.stat strong{color:var(--text)}.status{font-size:12px;font-weight:750;padding:5px 10px;border-radius:99px;background:var(--raised);color:var(--muted)}.status.success{color:var(--success)}.status.error{color:var(--danger)}.status.running{color:var(--accent)}.status.warning{color:var(--warn)}.results-content{min-height:225px;overflow:auto;max-height:56vh}.empty{min-height:225px;display:flex;align-items:center;justify-content:center;text-align:center;flex-direction:column;padding:30px;color:var(--muted);gap:7px}.empty strong{font-size:16px;color:var(--text)}.grid{width:100%;border-collapse:separate;border-spacing:0;font-size:13px;white-space:nowrap}.grid th{text-align:left;position:sticky;top:0;z-index:1;color:var(--muted);background:var(--raised);padding:11px 14px;border-bottom:1px solid var(--border);font-weight:650}.grid th button{background:none;border:0;color:inherit;font-weight:inherit;text-align:left;padding:0}.grid td{padding:10px 14px;border-bottom:1px solid var(--border);max-width:500px;overflow:hidden;text-overflow:ellipsis}.grid tbody tr:hover{background:var(--hover)}.row-index{color:var(--muted);font-variant-numeric:tabular-nums}.null{color:var(--warn);font-style:italic}.error-box{margin:16px;border:1px solid var(--danger);border-radius:9px;padding:14px;color:var(--danger);white-space:pre-wrap;overflow-wrap:anywhere}.footer{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 18px;border-top:1px solid var(--border)}.footer .buttons{margin-left:auto}.note{font-size:12px;color:var(--muted)}.notice{color:var(--warn)}.hidden{display:none!important}
+@media(max-width:920px){.app{grid-template-columns:230px minmax(0,1fr)}.workbench{padding:16px}.sidebar{padding:16px 10px}}@media(max-width:670px){.topbar{padding:0 14px}.app{display:block}.sidebar{border-right:0;border-bottom:1px solid var(--border)}.tree{max-height:220px;min-height:80px}.workbench{padding:12px}.page-heading h1{font-size:22px}.top-actions .tag{display:none}}@media(prefers-reduced-motion:no-preference){.btn,.object{transition:background .14s ease,filter .14s ease}}
+</style>
+</head>
+<body>
+<header class="topbar"><div class="brand"><span class="logo" aria-hidden="true">⌘</span><span>datawizz</span><span class="tag">PostgreSQL workbench</span></div><div class="top-actions"><span class="tag">Local · single user</span><button class="btn small" id="theme" type="button" aria-label="Toggle light and dark theme">☀ / ☾</button></div></header>
+<div class="app">
+<aside class="sidebar" aria-label="Database navigation">
+<div class="aside-heading"><span class="eyebrow">Explorer</span><button class="btn small" id="refresh" type="button">↻ Refresh</button></div>
+<label for="filter" class="eyebrow">Filter objects</label><input id="filter" class="input search" placeholder="Search schemas, tables, views…" autocomplete="off">
+<div class="count" id="object-count" aria-live="polite">Loading schemas…</div><nav id="objects" class="tree" aria-label="Database objects"></nav>
+<div class="sidebar-bottom"><div class="eyebrow">Selected object</div><p id="selected" class="note">Select a table or view to inspect columns and prepare a query.</p><div id="columns" class="column-list"></div></div>
+</aside>
+<main class="workbench">
+<div class="page-heading"><div><span class="eyebrow">Workspace / Query</span><h1>SQL Workbench</h1><p class="subtext">Explore, query and export from your configured PostgreSQL database.</p></div><span id="status" class="status" role="status" aria-live="polite">Ready</span></div>
+<section class="card" aria-labelledby="editor-heading"><div class="card-header"><h2 id="editor-heading" class="card-title">SQL editor</h2><div class="buttons"><button class="btn small" id="copy" type="button">Copy SQL</button><button class="btn small" id="clear" type="button">Clear</button></div></div>
+<div class="editor-wrap"><label class="eyebrow" for="sql">Statement</label><textarea id="sql" class="editor" spellcheck="false" aria-label="SQL statement">SELECT current_database(), version();</textarea>
+<div class="toolbar"><span class="helper">Execute a single statement · <kbd>Ctrl</kbd> / <kbd>⌘</kbd> + <kbd>Enter</kbd></span><div class="buttons"><button id="run" class="btn primary" type="button">▶ Run query</button></div></div></div></section>
+<section class="card results" aria-labelledby="result-heading"><div class="results-header"><div><h2 id="result-heading" class="card-title">Query results</h2><div id="message" class="note" role="status" aria-live="polite">Run a query to view data.</div></div><div class="buttons"><span class="stat" id="row-stat">0 rows</span><span class="stat" id="time-stat">— ms</span><button class="btn small" id="csv" type="button" disabled>↓ Export loaded CSV</button></div></div>
+<div id="output" class="results-content" aria-live="off"><div class="empty"><strong>No results yet</strong><span>Run a statement or choose a table from the explorer.</span></div></div>
+<div class="footer"><span id="result-note" class="note">Only loaded rows can be exported.</span><div class="buttons"><button id="prev" class="btn small" type="button" disabled>← Previous</button><span id="page" class="note">Page —</span><button id="next" class="btn small" type="button" disabled>Next →</button></div></div></section>
+</main>
+</div>
 <script>
+"use strict";
 const $=id=>document.getElementById(id);
-const sql=$('sql'), output=$('output'), message=$('message');
-let last=null;
-function text(node,value){node.textContent=value==null?'':String(value)}
-function error(e){message.className='error';text(message,e.message)}
-function quoted(v){return '"'+v.replaceAll('"','""')+'"'}
-async function api(path,options){const r=await fetch(path,options);const data=await r.json();if(!r.ok)throw Error(data.error||'Request failed');return data}
-async function load(){try{
- const objects=await api('/api/schema');$('objects').replaceChildren();
- const groups=Map.groupBy?Map.groupBy(objects,o=>o.schema):objects.reduce((m,o)=>(m.set(o.schema,[...(m.get(o.schema)||[]),o]),m),new Map());
- for(const [schema,items] of groups){const title=document.createElement('h3');text(title,schema);$('objects').append(title);
- for(const item of items){const b=document.createElement('button');b.className='object';text(b,(item.kind==='view'?'◇ ':'▦ ')+item.name);
- b.onclick=async()=>{sql.value='SELECT * FROM '+quoted(item.schema)+'.'+quoted(item.name)+' LIMIT 200;';
- try{const cols=await api('/api/columns?'+new URLSearchParams({schema:item.schema,object:item.name}));
- text($('columns'),cols.map(c=>c.name+' · '+c.data_type+(c.nullable?'':' · NOT NULL')).join('\n'));$('columns').style.whiteSpace='pre-wrap'}catch(e){error(e)}};$('objects').append(b)}
+const sql=$("sql"), output=$("output"), message=$("message");
+let objects=[],selected=null,last=null,busy=false,page=0,sortColumn=-1,sortAsc=true,requestId=0;
+const pageSize=50;
+function text(node,value){node.textContent=value==null?"":String(value)}
+function element(tag,className,content){const e=document.createElement(tag);if(className)e.className=className;if(content!==undefined)text(e,content);return e}
+function status(label,type=""){const e=$("status");e.className="status "+type;text(e,label)}
+function info(msg){text(message,msg)}
+function quoted(value){return '"'+value.replaceAll('"','""')+'"'}
+async function api(path,options){const r=await fetch(path,options);const data=await r.json();if(!r.ok)throw Error(data.error||"Request failed");return data}
+function setTheme(theme){document.documentElement.dataset.theme=theme;$("theme").setAttribute("aria-label","Switch to "+(theme==="dark"?"light":"dark")+" theme");text($("theme"),theme==="dark"?"☀ Light":"☾ Dark")}
+setTheme("dark");
+$("theme").onclick=()=>setTheme(document.documentElement.dataset.theme==="dark"?"light":"dark");
+function renderObjects(){
+ const filter=$("filter").value.toLocaleLowerCase().trim(),list=$("objects");list.replaceChildren();
+ const matching=objects.filter(o=>(o.schema+" "+o.name+" "+o.kind).toLocaleLowerCase().includes(filter));
+ text($("object-count"),matching.length+" of "+objects.length+" objects");
+ const grouped=new Map();for(const o of matching){if(!grouped.has(o.schema))grouped.set(o.schema,[]);grouped.get(o.schema).push(o)}
+ for(const [schema,items] of grouped){
+  const group=element("details");group.open=true;const title=element("summary","",schema+" · "+items.length);group.append(title);
+  for(const item of items){const b=element("button","object",(item.kind==="view"?"◇ ":"▦ ")+item.name);b.type="button";b.title=item.schema+"."+item.name;b.setAttribute("aria-label","Preview "+item.schema+"."+item.name);if(selected&&selected.schema===item.schema&&selected.name===item.name)b.classList.add("selected");b.onclick=()=>selectObject(item);group.append(b)}
+  list.append(group);
  }
- }catch(e){text($('objects'),e.message)}}
-async function run(){const button=$('run');button.disabled=true;message.className='muted';text(message,'Running…');output.replaceChildren();last=null;$('csv').disabled=true;
-try{const data=await api('/api/query',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sql:sql.value})});last=data;
-text(message,data.rows.length+' rows'+(data.truncated?' (truncated)':'')+' · '+data.duration_ms+' ms · affected: '+data.affected);
-if(data.columns.length){const table=document.createElement('table'),head=document.createElement('tr');
-for(const col of data.columns){const th=document.createElement('th');text(th,col);head.append(th)}const thead=document.createElement('thead');thead.append(head);table.append(thead);
-const body=document.createElement('tbody');for(const row of data.rows){const tr=document.createElement('tr');for(const value of row){const td=document.createElement('td');text(td,value===null?'NULL':value);if(value===null)td.className='null';tr.append(td)}body.append(tr)}table.append(body);output.append(table)}
-$('csv').disabled=!data.columns.length;
-}catch(e){error(e)}finally{button.disabled=false}}
-$('run').onclick=run;sql.addEventListener('keydown',e=>{if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){e.preventDefault();run()}});
-$('csv').onclick=()=>{if(!last)return;const q=v=>'"'+String(v??'').replaceAll('"','""')+'"';const lines=[last.columns,...last.rows].map(row=>row.map(q).join(','));const blob=new Blob([lines.join('\r\n')],{type:'text/csv;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='datawizz-loaded-rows.csv';a.click();URL.revokeObjectURL(url)};
-load();
-</script></body></html>
+ if(!matching.length)list.append(element("p","note",objects.length?"No matching objects.":"No readable objects found."));
+}
+async function loadObjects(){text($("object-count"),"Loading schemas…");try{objects=await api("/api/schema");renderObjects()}catch(e){objects=[];renderObjects();text($("object-count"),"Explorer unavailable");$("objects").replaceChildren(element("p","error-box",e.message))}}
+async function selectObject(item){selected=item;renderObjects();text($("selected"),item.schema+"."+item.name);sql.value="SELECT * FROM "+quoted(item.schema)+"."+quoted(item.name)+" LIMIT 200;";sql.focus();const ticket=++requestId;text($("columns"),"Loading columns…");try{const cols=await api("/api/columns?"+new URLSearchParams({schema:item.schema,object:item.name}));if(ticket!==requestId)return;$("columns").replaceChildren();for(const c of cols){const row=element("div","column-item");row.append(element("strong","",c.name),document.createTextNode(c.data_type+(c.nullable?"":" · NOT NULL")));$("columns").append(row)}if(!cols.length)text($("columns"),"No columns visible.")}catch(e){if(ticket===requestId)text($("columns"),e.message)}}
+$("filter").addEventListener("input",renderObjects);$("refresh").onclick=loadObjects;
+$("copy").onclick=async()=>{try{await navigator.clipboard.writeText(sql.value);info("SQL copied to clipboard.")}catch(e){info("Clipboard unavailable; select the SQL text to copy it.")}};
+$("clear").onclick=()=>{sql.value="";sql.focus()};
+function csvValue(v){return '"'+String(v??"").replaceAll('"','""')+'"'}
+$("csv").onclick=()=>{if(!last||!last.columns.length)return;const lines=[last.columns,...last.rows].map(r=>r.map(csvValue).join(","));const blob=new Blob(["\uFEFF"+lines.join("\r\n")],{type:"text/csv;charset=utf-8"});const url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download="datawizz-loaded-rows.csv";document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000)};
+function renderResults(){
+ output.replaceChildren();if(!last)return;
+ const rows=last.rows.map((r,i)=>({r,i}));
+ if(sortColumn>=0)rows.sort((a,b)=>{const x=a.r[sortColumn],y=b.r[sortColumn];if(x===null)return y===null?a.i-b.i:1;if(y===null)return -1;const n=String(x).localeCompare(String(y),undefined,{numeric:true,sensitivity:"base"});return (sortAsc?n:-n)||a.i-b.i});
+ const pages=Math.max(1,Math.ceil(rows.length/pageSize));page=Math.min(page,pages-1);
+ $("prev").disabled=page===0;$("next").disabled=page>=pages-1;text($("page"),rows.length?"Page "+(page+1)+" / "+pages:"Page —");
+ if(!last.columns.length){output.append(element("div","empty",last.affected+" affected rows. Statement completed."));return}
+ const table=element("table","grid"),thead=element("thead"),head=element("tr");
+ const idx=element("th","","#");head.append(idx);
+ last.columns.forEach((name,i)=>{const th=element("th"),b=element("button","",name+(sortColumn===i?(sortAsc?" ↑":" ↓"):" ↕"));b.type="button";b.title="Sort loaded rows by "+name;b.onclick=()=>{sortAsc=sortColumn===i?!sortAsc:true;sortColumn=i;page=0;renderResults()};th.append(b);head.append(th)});
+ thead.append(head);table.append(thead);const body=element("tbody");
+ for(const record of rows.slice(page*pageSize,(page+1)*pageSize)){const tr=element("tr");tr.append(element("td","row-index",record.i+1));for(const value of record.r){const td=element("td",value===null?"null":"",value===null?"NULL":value);td.title=value===null?"NULL":String(value);tr.append(td)}body.append(tr)}
+ table.append(body);output.append(table);
+}
+$("prev").onclick=()=>{if(page>0){page--;renderResults()}};
+$("next").onclick=()=>{if(last&&page<(Math.ceil(last.rows.length/pageSize)-1)){page++;renderResults()}};
+async function run(){
+ if(busy)return;if(!sql.value.trim()){status("No statement","warning");info("Enter a SQL statement first.");sql.focus();return}
+ busy=true;$("run").disabled=true;text($("run"),"Running…");$("csv").disabled=true;status("Running","running");info("Executing SQL…");output.replaceChildren(element("div","empty","Running query…"));last=null;
+ $("prev").disabled=true;$("next").disabled=true;text($("page"),"Page —");text($("row-stat"),"0 rows");text($("time-stat"),"— ms");
+ try{const result=await api("/api/query",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sql:sql.value})});last=result;page=0;sortColumn=-1;renderResults();text($("row-stat"),result.rows.length+" rows");text($("time-stat"),result.duration_ms+" ms");$("csv").disabled=!result.columns.length;
+  info(result.columns.length?"Showing "+result.rows.length+" loaded rows":result.affected+" affected rows");
+  text($("result-note"),result.truncated?"Result truncated at configured row limit. CSV contains loaded rows only.":"Sorting, paging and CSV apply to loaded rows only.");
+  status(result.truncated?"Truncated":"Completed",result.truncated?"warning":"success");
+ }catch(e){last=null;output.replaceChildren(element("div","error-box",e.message));info("Query failed.");status("Error","error");text($("result-note"),"Review the statement and try again.")}
+ finally{busy=false;$("run").disabled=false;text($("run"),"▶ Run query")}}
+$("run").onclick=run;sql.addEventListener("keydown",e=>{if(e.key==="Enter"&&(e.ctrlKey||e.metaKey)){e.preventDefault();run()}if(e.key==="Tab"&&!e.shiftKey){e.preventDefault();const start=sql.selectionStart;sql.setRangeText("  ",start,sql.selectionEnd,"end")}});
+loadObjects();
+</script>
+</body></html>
