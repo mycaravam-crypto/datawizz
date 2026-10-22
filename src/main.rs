@@ -156,7 +156,12 @@ async fn execute(State(state): State<AppState>, Json(req): Json<QueryRequest>) -
                 if result.rows.len() < state.max_rows {
                     result.rows.push((0..row.len()).map(|i| row.get(i).map(str::to_owned)).collect());
                 } else {
+                    // Stop reading after the first excess row. Draining the
+                    // stream would defeat the response cap for large results.
+                    // Each request owns its connection, which is not reused
+                    // after this incomplete result stream is dropped.
                     result.truncated = true;
+                    break;
                 }
             }
             SimpleQueryMessage::CommandComplete(count) => result.affected = count,
@@ -193,4 +198,79 @@ async fn main() {
     let listener = tokio::net::TcpListener::bind(&address).await.expect("Cannot bind port");
     println!("Datawizz ready at http://{address}");
     axum::serve(listener, app).await.expect("HTTP server failed");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_state(max_rows: usize, timeout_ms: u64) -> Option<AppState> {
+        let url = std::env::var("DATABASE_URL").ok()?;
+        Some(AppState {
+            url: Arc::new(url),
+            max_rows,
+            timeout_ms,
+        })
+    }
+
+    #[tokio::test]
+    async fn query_caps_rows_and_marks_truncation() {
+        let Some(state) = test_state(200, 10_000) else {
+            return;
+        };
+        let Json(result) = execute(
+            State(state),
+            Json(QueryRequest {
+                sql: "SELECT generate_series(1, 201) AS number".into(),
+            }),
+        )
+        .await
+        .expect("valid query");
+        assert_eq!(result.columns, vec!["number"]);
+        assert_eq!(result.rows.len(), 200);
+        assert!(result.truncated);
+        assert_eq!(result.rows[0][0].as_deref(), Some("1"));
+        assert_eq!(result.rows[199][0].as_deref(), Some("200"));
+    }
+
+    #[tokio::test]
+    async fn query_preserves_null_and_rejects_multiple_statements() {
+        let Some(state) = test_state(200, 10_000) else {
+            return;
+        };
+        let Json(result) = execute(
+            State(state.clone()),
+            Json(QueryRequest {
+                sql: "SELECT NULL::text AS empty_value, true AS flag, 42 AS number".into(),
+            }),
+        )
+        .await
+        .expect("valid query");
+        assert_eq!(result.rows.len(), 1);
+        assert_eq!(result.rows[0], vec![None, Some("t".into()), Some("42".into())]);
+
+        let error = execute(
+            State(state),
+            Json(QueryRequest {
+                sql: "SELECT 1; SELECT 2".into(),
+            }),
+        )
+        .await;
+        assert!(error.is_err(), "multiple statements must be rejected");
+    }
+
+    #[tokio::test]
+    async fn query_times_out_without_crashing() {
+        let Some(state) = test_state(200, 100) else {
+            return;
+        };
+        let error = execute(
+            State(state),
+            Json(QueryRequest {
+                sql: "SELECT pg_sleep(1)".into(),
+            }),
+        )
+        .await;
+        assert!(error.is_err(), "slow statement should time out");
+    }
 }
