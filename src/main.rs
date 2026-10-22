@@ -268,6 +268,93 @@ async fn table_rows(
     Ok(Json(PageResponse { columns, rows, offset, limit, has_next, stable_order }))
 }
 
+
+#[derive(Deserialize)]
+struct RowChange {
+    schema: String,
+    table: String,
+    original: Vec<Option<String>>,
+    values: Option<Vec<Option<String>>>,
+    delete: bool,
+}
+
+#[derive(Serialize)]
+struct ChangeResult { affected: u64 }
+
+async fn change_row(State(state): State<AppState>, Json(req): Json<RowChange>) -> ApiResult<ChangeResult> {
+    let mut client = connect(&state).await?;
+    // Only base/partitioned tables, never views, foreign tables or relations without a PK.
+    let relation = client.query_opt(
+        "SELECT c.oid, n.nspname, c.relname FROM pg_catalog.pg_class c
+         JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+         WHERE n.nspname=$1 AND c.relname=$2 AND c.relkind IN ('r','p')
+           AND has_schema_privilege(n.oid,'USAGE')
+           AND has_table_privilege(c.oid,'SELECT')
+           AND has_table_privilege(c.oid,CASE WHEN $3 THEN 'DELETE' ELSE 'UPDATE' END)",
+        &[&req.schema, &req.table, &req.delete],
+    ).await.map_err(|e| postgres_error(&e))?
+      .ok_or_else(|| api_error(StatusCode::FORBIDDEN, "Table is not editable or access denied"))?;
+    let oid: u32 = relation.get(0);
+    let schema: String = relation.get(1);
+    let table: String = relation.get(2);
+    let columns = client.query(
+        "SELECT a.attname, pg_catalog.format_type(a.atttypid,a.atttypmod),
+                a.attnum = ANY(COALESCE(
+                  (SELECT i.indkey FROM pg_catalog.pg_index i
+                   WHERE i.indrelid=$1 AND i.indisprimary), '0'::int2vector)),
+                a.attgenerated <> '' OR a.attidentity <> ''
+         FROM pg_catalog.pg_attribute a
+         WHERE a.attrelid=$1 AND a.attnum>0 AND NOT a.attisdropped
+         ORDER BY a.attnum",
+        &[&oid],
+    ).await.map_err(|e| postgres_error(&e))?;
+    if columns.is_empty() || !columns.iter().any(|c| c.get::<_, bool>(2)) {
+        return Err(api_error(StatusCode::BAD_REQUEST, "Primary key required"));
+    }
+    if req.original.len()!=columns.len() || (!req.delete && req.values.as_ref().map(Vec::len)!=Some(columns.len())) {
+        return Err(api_error(StatusCode::BAD_REQUEST, "Row columns mismatch"));
+    }
+    let mut args: Vec<Option<String>> = Vec::new();
+    let mut where_parts = Vec::new();
+    for (i,c) in columns.iter().enumerate() {
+        // Compare the full originally loaded row to reject concurrent modifications.
+        let name: String = c.get(0);
+        args.push(req.original[i].clone());
+        where_parts.push(format!("{}::text IS NOT DISTINCT FROM ${}",quote_ident(&name),args.len()));
+    }
+    let qualified=format!("{}.{}",quote_ident(&schema),quote_ident(&table));
+    let sql = if req.delete {
+        format!("DELETE FROM {qualified} WHERE {} RETURNING 1",where_parts.join(" AND "))
+    } else {
+        let mut assignments=Vec::new();
+        let values=req.values.as_ref().expect("checked above");
+        for (i,c) in columns.iter().enumerate() {
+            if values[i]==req.original[i] {continue;}
+            if c.get::<_,bool>(2) || c.get::<_,bool>(3) {
+                return Err(api_error(StatusCode::BAD_REQUEST,"Primary key and generated columns cannot be edited"));
+            }
+            let name: String=c.get(0);
+            let datatype: String=c.get(1);
+            args.push(values[i].clone());
+            assignments.push(format!("{} = CAST(${}::text AS {})",quote_ident(&name),args.len(),datatype));
+        }
+        if assignments.is_empty() {
+            return Err(api_error(StatusCode::BAD_REQUEST,"No changed editable fields"));
+        }
+        format!("UPDATE {qualified} SET {} WHERE {} RETURNING 1",assignments.join(", "),where_parts.join(" AND "))
+    };
+    // Execute atomically; RETURNING verifies one row before committing.
+    let transaction=client.transaction().await.map_err(|e| postgres_error(&e))?;
+    let refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
+        args.iter().map(|v| v as &(dyn tokio_postgres::types::ToSql + Sync)).collect();
+    let rows=transaction.query(&sql,&refs).await.map_err(|e| postgres_error(&e))?;
+    if rows.len()!=1 {
+        return Err(api_error(StatusCode::CONFLICT,"Row changed or no longer exists; refresh and retry"));
+    }
+    transaction.commit().await.map_err(|e| postgres_error(&e))?;
+    Ok(Json(ChangeResult{affected:1}))
+}
+
 async fn index() -> impl IntoResponse {
     ([(header::CACHE_CONTROL, "no-store")], Html(include_str!("../web/index.html")))
 }
@@ -289,6 +376,7 @@ async fn main() {
         .route("/api/columns", get(columns))
         .route("/api/query", post(execute))
         .route("/api/table-rows", get(table_rows))
+        .route("/api/row-change", post(change_row))
         .with_state(state);
     let host = env::var("HOST").unwrap_or_else(|_| "127.0.0.1".into());
     let address = format!("{host}:{port}");
