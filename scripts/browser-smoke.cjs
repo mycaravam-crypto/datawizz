@@ -17,6 +17,14 @@ const server = http.createServer(async (req, res) => {
   } else if (req.url.startsWith("/api/table-rows")) {
     const offset = Number(new URL(req.url,"http://localhost").searchParams.get("offset")||0);
     res.end(JSON.stringify({columns:["id","label"],rows:[[String(offset+1),"original"]],offset,limit:100,has_next:offset===0,stable_order:true}));
+  } else if (req.url === "/api/row-change") {
+    let body=""; for await(const chunk of req) body+=chunk;
+    const payload=JSON.parse(body);
+    assert.equal(payload.schema,"public");
+    assert.equal(payload.table,"demo");
+    assert.equal(payload.original.length,2);
+    assert.equal(payload.values.length,2);
+    res.end(JSON.stringify({affected:1}));
   } else if (req.url === "/api/row-insert") {
     let body=""; for await(const chunk of req) body+=chunk;
     const payload=JSON.parse(body);
@@ -59,6 +67,17 @@ const server = http.createServer(async (req, res) => {
     await page.locator("#insert-form").getByRole("button",{name:"Insert"}).click();
     await page.locator("#insert-dialog").waitFor({state:"hidden"});
     await page.getByText(/Row inserted/).waitFor();
+    await page.locator("#browse").click();
+    await page.locator("#output .editable-cell").first().dblclick();
+    await page.locator("#output .cell-editor").fill("inline-value");
+    await page.locator("#output .cell-editor").press("Enter");
+    await page.locator("#status").getByText(/Completed|Saved/).waitFor();
+    await page.locator("#output input[aria-label^='Select row']").first().check();
+    await page.locator("#bulk-column").selectOption("1");
+    await page.locator("#bulk-value").fill("batch-value");
+    page.once("dialog",dialog=>dialog.accept());
+    await page.locator("#bulk-apply").click();
+    await page.getByText(/1 of 1 rows updated/).waitFor();
     await page.getByRole("button",{name:"Browse table rows"}).click();
     await page.locator("#server-page-info").getByText(/Database rows 1/).waitFor();
     await page.locator("#server-next").click();
