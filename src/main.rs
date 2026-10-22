@@ -356,6 +356,97 @@ async fn change_row(State(state): State<AppState>, Json(req): Json<RowChange>) -
 }
 
 
+
+#[derive(Deserialize)]
+struct ChangesetRequest {
+    schema: String,
+    table: String,
+    changes: Vec<ChangesetItem>,
+}
+
+#[derive(Deserialize)]
+struct ChangesetItem {
+    original: Vec<Option<String>>,
+    values: Vec<Option<String>>,
+}
+
+// All rows are updated on ONE PostgreSQL connection and ONE transaction.
+// Any error or stale original row drops the transaction without a commit.
+async fn apply_changeset(
+    State(state): State<AppState>,
+    Json(req): Json<ChangesetRequest>,
+) -> ApiResult<ChangeResult> {
+    if req.changes.is_empty() || req.changes.len() > 20 {
+        return Err(api_error(StatusCode::BAD_REQUEST, "Changeset must contain 1 to 20 rows"));
+    }
+    let mut client = connect(&state).await?;
+    let relation = client.query_opt(
+        "SELECT c.oid,n.nspname,c.relname FROM pg_catalog.pg_class c
+         JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+         WHERE n.nspname=$1 AND c.relname=$2 AND c.relkind IN ('r','p')
+           AND has_schema_privilege(n.oid,'USAGE')
+           AND has_table_privilege(c.oid,'SELECT')
+           AND has_table_privilege(c.oid,'UPDATE')",
+        &[&req.schema,&req.table],
+    ).await.map_err(|e| postgres_error(&e))?
+     .ok_or_else(||api_error(StatusCode::FORBIDDEN,"Table is not editable or access denied"))?;
+    let oid:u32=relation.get(0);
+    let schema:String=relation.get(1);
+    let table:String=relation.get(2);
+    let columns=client.query(
+        "SELECT a.attname,pg_catalog.format_type(a.atttypid,a.atttypmod),
+                EXISTS (SELECT 1 FROM pg_catalog.pg_index i
+                        WHERE i.indrelid=$1 AND i.indisprimary
+                          AND a.attnum=ANY(i.indkey)),
+                a.attgenerated <> '' OR a.attidentity <> ''
+         FROM pg_catalog.pg_attribute a
+         WHERE a.attrelid=$1 AND a.attnum>0 AND NOT a.attisdropped
+         ORDER BY a.attnum",
+        &[&oid],
+    ).await.map_err(|e| postgres_error(&e))?;
+    if columns.is_empty() || !columns.iter().any(|c|c.get::<_,bool>(2)) {
+        return Err(api_error(StatusCode::BAD_REQUEST,"Primary key required"));
+    }
+    let qualified=format!("{}.{}",quote_ident(&schema),quote_ident(&table));
+    let transaction=client.transaction().await.map_err(|e|postgres_error(&e))?;
+    for change in &req.changes {
+        if change.original.len()!=columns.len() || change.values.len()!=columns.len() {
+            return Err(api_error(StatusCode::BAD_REQUEST,"Row columns mismatch"));
+        }
+        let mut args:Vec<Option<String>>=Vec::new();
+        let mut predicates=Vec::new();
+        let mut assignments=Vec::new();
+        for (i,col) in columns.iter().enumerate() {
+            let name:String=col.get(0);
+            args.push(change.original[i].clone());
+            predicates.push(format!("{}::text IS NOT DISTINCT FROM ${}",quote_ident(&name),args.len()));
+        }
+        for (i,col) in columns.iter().enumerate() {
+            if change.values[i]==change.original[i] {continue}
+            if col.get::<_,bool>(2)||col.get::<_,bool>(3) {
+                return Err(api_error(StatusCode::BAD_REQUEST,"Primary key and generated columns cannot be edited"));
+            }
+            let name:String=col.get(0);
+            let datatype:String=col.get(1);
+            args.push(change.values[i].clone());
+            assignments.push(format!("{}=CAST(${}::text AS {})",quote_ident(&name),args.len(),datatype));
+        }
+        if assignments.is_empty() {
+            return Err(api_error(StatusCode::BAD_REQUEST,"No changed editable fields"));
+        }
+        let sql=format!("UPDATE {qualified} SET {} WHERE {} RETURNING 1",
+            assignments.join(", "),predicates.join(" AND "));
+        let refs:Vec<&(dyn tokio_postgres::types::ToSql+Sync)>=args.iter()
+            .map(|v|v as &(dyn tokio_postgres::types::ToSql+Sync)).collect();
+        let rows=transaction.query(&sql,&refs).await.map_err(|e|postgres_error(&e))?;
+        if rows.len()!=1 {
+            return Err(api_error(StatusCode::CONFLICT,"Changeset conflict; no rows committed"));
+        }
+    }
+    transaction.commit().await.map_err(|e|postgres_error(&e))?;
+    Ok(Json(ChangeResult{affected:req.changes.len() as u64}))
+}
+
 #[derive(Deserialize)]
 struct InsertField {
     column: String,
@@ -442,6 +533,7 @@ async fn main() {
         .route("/api/query", post(execute))
         .route("/api/table-rows", get(table_rows))
         .route("/api/row-change", post(change_row))
+        .route("/api/changeset", post(apply_changeset))
         .route("/api/row-insert", post(insert_row))
         .with_state(state);
     let host = env::var("HOST").unwrap_or_else(|_| "127.0.0.1".into());
