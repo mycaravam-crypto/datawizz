@@ -676,6 +676,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn changeset_rolls_back_all_rows_on_stale_conflict() {
+        let Some(state)=test_state(200,10_000) else {return;};
+        let client=connect(&state).await.expect("connect");
+        client.batch_execute(
+            "CREATE TABLE public.datawizz_changeset_test (id integer PRIMARY KEY, label text);
+             INSERT INTO public.datawizz_changeset_test VALUES (1,'first'),(2,'second')"
+        ).await.expect("seed");
+        let change=|id:&str,old:&str,new:&str|ChangesetItem{
+            original:vec![Some(id.into()),Some(old.into())],
+            values:vec![Some(id.into()),Some(new.into())],
+        };
+        let request=|changes|ChangesetRequest{
+            schema:"public".into(),table:"datawizz_changeset_test".into(),changes
+        };
+        let Err((status,_))=apply_changeset(State(state.clone()),Json(request(vec![
+            change("1","first","updated"),change("2","stale","changed")
+        ]))).await else {panic!("stale row must abort changeset")};
+        assert_eq!(status,StatusCode::CONFLICT);
+        let rows=client.query(
+            "SELECT label FROM public.datawizz_changeset_test ORDER BY id",&[]
+        ).await.expect("read after rollback");
+        assert_eq!(rows[0].get::<_,String>(0),"first");
+        assert_eq!(rows[1].get::<_,String>(0),"second");
+        let Json(result)=apply_changeset(State(state),Json(request(vec![
+            change("1","first","updated"),change("2","second","changed")
+        ]))).await.expect("commit both rows");
+        assert_eq!(result.affected,2);
+        let rows=client.query(
+            "SELECT label FROM public.datawizz_changeset_test ORDER BY id",&[]
+        ).await.expect("read after commit");
+        assert_eq!(rows[0].get::<_,String>(0),"updated");
+        assert_eq!(rows[1].get::<_,String>(0),"changed");
+        client.batch_execute("DROP TABLE public.datawizz_changeset_test").await.expect("cleanup");
+    }
+
+    #[tokio::test]
     async fn row_edit_respects_pk_null_and_optimistic_conflicts() {
         let Some(state)=test_state(200, 10_000) else {return;};
         let client=connect(&state).await.expect("connect");
