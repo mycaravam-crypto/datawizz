@@ -186,6 +186,87 @@ async fn execute(State(state): State<AppState>, Json(req): Json<QueryRequest>) -
     Ok(Json(result))
 }
 
+#[derive(Deserialize)]
+struct PageRequest {
+    schema: String,
+    table: String,
+    offset: Option<i64>,
+    limit: Option<i64>,
+}
+
+#[derive(Serialize)]
+struct PageResponse {
+    columns: Vec<String>,
+    rows: Vec<Vec<Option<String>>>,
+    offset: i64,
+    limit: i64,
+    has_next: bool,
+    stable_order: bool,
+}
+
+fn quote_ident(name: &str) -> String {
+    format!("\"{}\"", name.replace('"', "\"\""))
+}
+
+async fn table_rows(
+    State(state): State<AppState>,
+    Query(req): Query<PageRequest>,
+) -> ApiResult<PageResponse> {
+    let offset = req.offset.unwrap_or(0);
+    let limit = req.limit.unwrap_or(100);
+    if !(0..=1_000_000).contains(&offset) || !(1..=200).contains(&limit) {
+        return Err(api_error(StatusCode::BAD_REQUEST, "Invalid offset or page size"));
+    }
+    let client = connect(&state).await?;
+    // Resolve the relation using bound parameters, then use only names from pg_catalog
+    // when constructing safely quoted SQL identifiers.
+    let relation = client.query_opt(
+        "SELECT c.oid, n.nspname, c.relname
+         FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+         WHERE n.nspname=$1 AND c.relname=$2
+           AND c.relkind IN ('r','p','v','m','f')
+           AND has_schema_privilege(n.oid,'USAGE')
+           AND has_table_privilege(c.oid,'SELECT')",
+        &[&req.schema, &req.table],
+    ).await.map_err(|e| postgres_error(&e))?
+     .ok_or_else(|| api_error(StatusCode::NOT_FOUND, "Table not found or access denied"))?;
+    let oid: u32 = relation.get(0);
+    let schema: String = relation.get(1);
+    let table: String = relation.get(2);
+    let keys = client.query(
+        "SELECT a.attname FROM pg_catalog.pg_index i
+         JOIN pg_catalog.pg_attribute a ON a.attrelid=i.indrelid
+            AND a.attnum = ANY(i.indkey)
+         WHERE i.indrelid=$1 AND i.indisprimary
+         ORDER BY array_position(i.indkey::smallint[],a.attnum::smallint)",
+        &[&oid],
+    ).await.map_err(|e| postgres_error(&e))?;
+    let stable_order = !keys.is_empty();
+    let order = if stable_order {
+        format!(" ORDER BY {}", keys.iter().map(|row| {
+            let name: String = row.get(0);
+            quote_ident(&name)
+        }).collect::<Vec<_>>().join(", "))
+    } else { String::new() };
+    let sql = format!(
+        "SELECT * FROM {}.{}{} LIMIT {} OFFSET {}",
+        quote_ident(&schema), quote_ident(&table), order, limit+1, offset
+    );
+    let statement = client.prepare(&sql).await.map_err(|e| postgres_error(&e))?;
+    let columns = statement.columns().iter().map(|c| c.name().to_string()).collect();
+    let stream = client.simple_query_raw(&sql).await.map_err(|e| postgres_error(&e))?;
+    tokio::pin!(stream);
+    let mut rows = Vec::new();
+    while let Some(message) = stream.try_next().await.map_err(|e| postgres_error(&e))? {
+        if let SimpleQueryMessage::Row(row) = message {
+            rows.push((0..row.len()).map(|i| row.get(i).map(str::to_owned)).collect());
+        }
+    }
+    let has_next = rows.len() > limit as usize;
+    rows.truncate(limit as usize);
+    Ok(Json(PageResponse { columns, rows, offset, limit, has_next, stable_order }))
+}
+
 async fn index() -> impl IntoResponse {
     ([(header::CACHE_CONTROL, "no-store")], Html(include_str!("../web/index.html")))
 }
@@ -206,6 +287,7 @@ async fn main() {
         .route("/api/schema", get(schema))
         .route("/api/columns", get(columns))
         .route("/api/query", post(execute))
+        .route("/api/table-rows", get(table_rows))
         .with_state(state);
     let host = env::var("HOST").unwrap_or_else(|_| "127.0.0.1".into());
     let address = format!("{host}:{port}");
