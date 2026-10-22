@@ -17,7 +17,15 @@ const server = http.createServer(async (req, res) => {
   } else if (req.url.startsWith("/api/table-rows")) {
     const offset = Number(new URL(req.url,"http://localhost").searchParams.get("offset")||0);
     res.end(JSON.stringify({columns:["id","label"],rows:[[String(offset+1),"original"]],offset,limit:100,has_next:offset===0,stable_order:true}));
-  } else if (req.url === "/api/row-change") {\n    let body=""; for await(const chunk of req) body+=chunk;\n    const payload=JSON.parse(body);\n    assert.equal(payload.schema,"public");\n    assert.equal(payload.table,"demo");\n    assert.deepEqual(payload.original,["1","original"]);\n    assert.deepEqual(payload.values,["1","updated"]);\n    res.end(JSON.stringify({affected:1}));\n  } else if (req.url === "/api/query") {
+  } else if (req.url === "/api/row-change") {
+    let body=""; for await(const chunk of req) body+=chunk;
+    const payload=JSON.parse(body);
+    assert.equal(payload.schema,"public");
+    assert.equal(payload.table,"demo");
+    assert.deepEqual(payload.original,["1","original"]);
+    assert.deepEqual(payload.values,["1","updated"]);
+    res.end(JSON.stringify({affected:1}));
+  } else if (req.url === "/api/query") {
     let body=""; for await(const chunk of req) body += chunk;
     const statement=JSON.parse(body).sql;
     res.end(JSON.stringify({columns:["value"],column_types:["text"],rows:[[statement],[null],["alpha"]],affected:0,truncated:false,duration_ms:3}));
