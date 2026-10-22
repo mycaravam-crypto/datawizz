@@ -465,6 +465,40 @@ mod tests {
     }
 
 
+
+    #[tokio::test]
+    async fn insert_uses_defaults_and_preserves_null() {
+        let Some(state)=test_state(200,10_000) else {return;};
+        let client=connect(&state).await.expect("connect");
+        client.batch_execute(
+            "CREATE TABLE public.datawizz_insert_test (
+              id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+              title text NOT NULL DEFAULT 'default title',
+              note text DEFAULT 'default note'
+             )"
+        ).await.expect("create");
+        let insert=|fields| InsertRow{schema:"public".into(),table:"datawizz_insert_test".into(),fields};
+        insert_row(State(state.clone()),Json(insert(vec![]))).await.expect("defaults");
+        insert_row(State(state.clone()),Json(insert(vec![
+            InsertField{column:"title".into(),value:Some("literal NULL".into())},
+            InsertField{column:"note".into(),value:None},
+        ]))).await.expect("explicit null");
+        let rows=client.query("SELECT id,title,note FROM public.datawizz_insert_test ORDER BY id",&[])
+            .await.expect("read");
+        assert_eq!(rows.len(),2);
+        assert_eq!(rows[0].get::<_,String>(1),"default title");
+        assert_eq!(rows[0].get::<_,Option<String>>(2),Some("default note".into()));
+        assert_eq!(rows[1].get::<_,String>(1),"literal NULL");
+        assert_eq!(rows[1].get::<_,Option<String>>(2),None);
+        assert!(insert_row(State(state.clone()),Json(insert(vec![
+            InsertField{column:"id".into(),value:Some("99".into())}
+        ]))).await.is_err());
+        assert!(insert_row(State(state),Json(insert(vec![
+            InsertField{column:"missing".into(),value:Some("a".into())}
+        ]))).await.is_err());
+        client.batch_execute("DROP TABLE public.datawizz_insert_test").await.expect("cleanup");
+    }
+
     #[tokio::test]
     async fn row_edit_respects_pk_null_and_optimistic_conflicts() {
         let Some(state)=test_state(200, 10_000) else {return;};
