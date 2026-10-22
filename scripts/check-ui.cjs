@@ -1,0 +1,18 @@
+const fs = require("node:fs");
+const vm = require("node:vm");
+const assert = require("node:assert/strict");
+
+const html = fs.readFileSync("web/index.html", "utf8");
+const scripts = [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)];
+assert.equal(scripts.length, 1, "Expected one embedded application script");
+new vm.Script(scripts[0][1], { filename: "web/index.html" });
+
+const ids = ["sql", "tabs", "objects", "filter", "columns", "run", "csv",
+  "output", "result-filter", "prev", "next", "status", "theme"];
+for (const id of ids) {
+  assert.match(html, new RegExp('id="' + id + '"'), "Missing UI control: " + id);
+}
+assert.match(html, /aria-label=/, "UI should have accessible labels");
+assert.match(html, /:focus-visible/, "Missing keyboard focus styles");
+assert.match(html, /textContent/, "Dynamic SQL/database strings must render as text");
+console.log("Embedded JavaScript syntax and basic UI structure: OK");
