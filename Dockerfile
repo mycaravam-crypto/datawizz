@@ -2,13 +2,18 @@
 FROM rust:1-bookworm AS builder
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-# Optional corporate CA via BuildKit secret; never copy certs into the repository/image.
-# docker build --secret id=corporate_ca,src=certs/company-ca.crt -t datawizz:local .
-RUN --mount=type=secret,id=corporate_ca \
-    if [ -f /run/secrets/corporate_ca ]; then \
-      cp /run/secrets/corporate_ca /usr/local/share/ca-certificates/company-ca.crt && \
-      update-ca-certificates; \
-    fi
+
+# Source certificates are mounted only for this build step.
+# The resulting builder trust store is not copied into the runtime image.
+# PEM-encoded *.crt and *.pem files in certs/ are supported; no certs is fine.
+RUN --mount=type=bind,source=certs,target=/tmp/corporate-certs,readonly \
+    set -eu; \
+    for cert in /tmp/corporate-certs/*.crt /tmp/corporate-certs/*.pem; do \
+      [ -f "$cert" ] || continue; \
+      name="$(basename "$cert")"; \
+      cp "$cert" "/usr/local/share/ca-certificates/datawizz-${name%.*}.crt"; \
+    done; \
+    update-ca-certificates
 ENV CARGO_HTTP_CAINFO=/etc/ssl/certs/ca-certificates.crt \
     CARGO_HTTP_PROXY_CAINFO=/etc/ssl/certs/ca-certificates.crt \
     SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt

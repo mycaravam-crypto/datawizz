@@ -2,4 +2,8 @@ target
 .git
 .env
 *.log
-certs/
+# Only PEM certificates are required for the local Rust builder.
+certs/*
+!certs/*.crt
+!certs/*.pem
+!certs/.gitkeep
