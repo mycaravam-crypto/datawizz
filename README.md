@@ -8,6 +8,51 @@ Small, fast, local-first PostgreSQL UI written in Rust. One executable; no Node 
 - Display bounded results, errors, runtime and affected rows; export **loaded rows only** as CSV
 - Built-in HTML/JavaScript editor. No user accounts or stored credentials.
 
+## Quick start: disposable test PostgreSQL (recommended)
+
+Only Docker Desktop / Docker Compose is required; no local Cargo or PostgreSQL.
+
+```sh
+docker compose up --build
+```
+
+Open **http://127.0.0.1:3000**. The browser can explore `public.products` and `public.available_products`. Example query:
+
+```sql
+SELECT * FROM public.products;
+```
+
+The test DB is intentionally disposable (tmpfs). All changes are lost when the PostgreSQL container stops/restarts. It is reachable only from the Compose network; PostgreSQL port 5432 is **not** published on the host. The app's port is published only to host loopback. These static test credentials are for local development only.
+
+Stop and remove the containers:
+```sh
+docker compose down
+```
+
+## Corporate TLS interception during Docker build
+
+The builder installs normal system CAs by default. If your company intercepts TLS and your Docker build cannot fetch crates.io, provide the **trusted PEM-encoded corporate CA** locally in `certs/company-ca.crt`. The `certs/` directory is excluded from the Docker build context and Git tracking should be prevented by a local `.git/info/exclude` entry (or your global gitignore).
+
+For the standalone build:
+```sh
+docker build --secret id=corporate_ca,src=certs/company-ca.crt -t datawizz:local .
+```
+
+For Compose, set the optional BuildKit secret in `compose.override.yaml` (ignored locally via `.git/info/exclude`):
+```yaml
+services:
+  app:
+    build:
+      secrets:
+        - corporate_ca
+secrets:
+  corporate_ca:
+    file: ./certs/company-ca.crt
+```
+Then run `docker compose up --build`.
+
+Never disable TLS verification or commit corporate CA material unintentionally. The CA is mounted only during the builder step; it is **not** included in the final runtime image. PostgreSQL's current driver still uses `NoTls`.
+
 ## Build using Docker (no local Cargo)
 
 ```sh
@@ -56,4 +101,4 @@ docker run --rm -v "${PWD}:/work" -w /work rust:1-bookworm cargo test
 
 The current PostgreSQL driver uses `NoTls`: **TLS connections are not implemented yet**. Do not use it across untrusted networks. The row limit caps response memory, not the work performed inside PostgreSQL: extra rows are consumed and discarded until completion or timeout. The application opens a DB connection per request. It does not implement profiles, multi-statement scripts, autocomplete, query history, a GUI row editor, or advanced administration.
 
-This is the first implementation increment; a Docker compilation and live PostgreSQL integration run have not yet been verified. Follow issues #1-#6.
+The CI Docker build passed on the initial MVP. The new Compose PostgreSQL smoke test still requires local verification. Follow issues #1-#6.
