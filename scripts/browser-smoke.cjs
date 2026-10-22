@@ -158,6 +158,7 @@ const server = http.createServer(async (req, res) => {
     assert.equal(await page.locator("#server-pager").isVisible(),false,"Free SQL hides server pager");
     await page.evaluate(()=>fetch("/api/delay-browse"));
     await page.locator("#browse").click();
+    await page.locator("#filter").fill("");
     await page.getByRole("button",{name:"Preview public.other"}).click();
     await page.locator("#selected").getByText("public.other").waitFor();
     await page.evaluate(()=>fetch("/api/release-browse"));
