@@ -355,6 +355,71 @@ async fn change_row(State(state): State<AppState>, Json(req): Json<RowChange>) -
     Ok(Json(ChangeResult{affected:1}))
 }
 
+
+#[derive(Deserialize)]
+struct InsertField {
+    column: String,
+    // null means SQL NULL, while omitting a column uses its database DEFAULT.
+    value: Option<String>,
+}
+#[derive(Deserialize)]
+struct InsertRow { schema: String, table: String, fields: Vec<InsertField> }
+
+async fn insert_row(State(state): State<AppState>, Json(req): Json<InsertRow>) -> ApiResult<ChangeResult> {
+    let client=connect(&state).await?;
+    let relation=client.query_opt(
+        "SELECT c.oid,n.nspname,c.relname FROM pg_catalog.pg_class c
+         JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+         WHERE n.nspname=$1 AND c.relname=$2 AND c.relkind IN ('r','p')
+           AND has_schema_privilege(n.oid,'USAGE')
+           AND has_table_privilege(c.oid,'INSERT')",
+        &[&req.schema,&req.table],
+    ).await.map_err(|e| postgres_error(&e))?
+     .ok_or_else(|| api_error(StatusCode::FORBIDDEN,"Table is not insertable or access denied"))?;
+    let oid:u32=relation.get(0);
+    let schema:String=relation.get(1);
+    let table:String=relation.get(2);
+    let metadata=client.query(
+        "SELECT a.attname,pg_catalog.format_type(a.atttypid,a.atttypmod),
+                a.attgenerated <> '' OR a.attidentity <> ''
+         FROM pg_catalog.pg_attribute a
+         WHERE a.attrelid=$1 AND a.attnum>0 AND NOT a.attisdropped
+         ORDER BY a.attnum",&[&oid],
+    ).await.map_err(|e| postgres_error(&e))?;
+    if req.fields.len()>metadata.len() {
+        return Err(api_error(StatusCode::BAD_REQUEST,"Too many insert fields"));
+    }
+    let mut names=Vec::new();
+    let mut expressions=Vec::new();
+    let mut values:Vec<Option<String>>=Vec::new();
+    for field in &req.fields {
+        let column=metadata.iter().find(|r|r.get::<_,String>(0)==field.column)
+            .ok_or_else(||api_error(StatusCode::BAD_REQUEST,"Unknown insert column"))?;
+        if column.get::<_,bool>(2) || names.iter().any(|n:&String|n==&field.column) {
+            return Err(api_error(StatusCode::BAD_REQUEST,"Duplicate or generated insert column"));
+        }
+        names.push(field.column.clone());
+        values.push(field.value.clone());
+        let datatype:String=column.get(1);
+        expressions.push(format!("CAST(${}::text AS {})",values.len(),datatype));
+    }
+    let qualified=format!("{}.{}",quote_ident(&schema),quote_ident(&table));
+    let sql=if names.is_empty() {
+        format!("INSERT INTO {qualified} DEFAULT VALUES")
+    } else {
+        format!("INSERT INTO {qualified} ({}) VALUES ({})",
+            names.iter().map(|n|quote_ident(n)).collect::<Vec<_>>().join(", "),
+            expressions.join(", "))
+    };
+    let refs:Vec<&(dyn tokio_postgres::types::ToSql+Sync)>=values.iter()
+        .map(|v|v as &(dyn tokio_postgres::types::ToSql+Sync)).collect();
+    let affected=client.execute(&sql,&refs).await.map_err(|e| postgres_error(&e))?;
+    if affected!=1 {
+        return Err(api_error(StatusCode::CONFLICT,"Insert did not affect exactly one row"));
+    }
+    Ok(Json(ChangeResult{affected}))
+}
+
 async fn index() -> impl IntoResponse {
     ([(header::CACHE_CONTROL, "no-store")], Html(include_str!("../web/index.html")))
 }
@@ -377,6 +442,7 @@ async fn main() {
         .route("/api/query", post(execute))
         .route("/api/table-rows", get(table_rows))
         .route("/api/row-change", post(change_row))
+        .route("/api/row-insert", post(insert_row))
         .with_state(state);
     let host = env::var("HOST").unwrap_or_else(|_| "127.0.0.1".into());
     let address = format!("{host}:{port}");
@@ -398,6 +464,40 @@ mod tests {
         })
     }
 
+
+
+    #[tokio::test]
+    async fn insert_uses_defaults_and_preserves_null() {
+        let Some(state)=test_state(200,10_000) else {return;};
+        let client=connect(&state).await.expect("connect");
+        client.batch_execute(
+            "CREATE TABLE public.datawizz_insert_test (
+              id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+              title text NOT NULL DEFAULT 'default title',
+              note text DEFAULT 'default note'
+             )"
+        ).await.expect("create");
+        let insert=|fields| InsertRow{schema:"public".into(),table:"datawizz_insert_test".into(),fields};
+        insert_row(State(state.clone()),Json(insert(vec![]))).await.expect("defaults");
+        insert_row(State(state.clone()),Json(insert(vec![
+            InsertField{column:"title".into(),value:Some("literal NULL".into())},
+            InsertField{column:"note".into(),value:None},
+        ]))).await.expect("explicit null");
+        let rows=client.query("SELECT id,title,note FROM public.datawizz_insert_test ORDER BY id",&[])
+            .await.expect("read");
+        assert_eq!(rows.len(),2);
+        assert_eq!(rows[0].get::<_,String>(1),"default title");
+        assert_eq!(rows[0].get::<_,Option<String>>(2),Some("default note".into()));
+        assert_eq!(rows[1].get::<_,String>(1),"literal NULL");
+        assert_eq!(rows[1].get::<_,Option<String>>(2),None);
+        assert!(insert_row(State(state.clone()),Json(insert(vec![
+            InsertField{column:"id".into(),value:Some("99".into())}
+        ]))).await.is_err());
+        assert!(insert_row(State(state),Json(insert(vec![
+            InsertField{column:"missing".into(),value:Some("a".into())}
+        ]))).await.is_err());
+        client.batch_execute("DROP TABLE public.datawizz_insert_test").await.expect("cleanup");
+    }
 
     #[tokio::test]
     async fn row_edit_respects_pk_null_and_optimistic_conflicts() {
