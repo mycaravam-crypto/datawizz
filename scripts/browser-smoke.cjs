@@ -22,8 +22,8 @@ const server = http.createServer(async (req, res) => {
     const payload=JSON.parse(body);
     assert.equal(payload.schema,"public");
     assert.equal(payload.table,"demo");
-    assert.equal(payload.original.length,2);
-    assert.equal(payload.values.length,2);
+    assert.deepEqual(payload.original,["1","original"]);
+    assert.deepEqual(payload.values,["1","updated"]);
     res.end(JSON.stringify({affected:1}));
   } else if (req.url === "/api/changeset") {
     let body=""; for await(const chunk of req) body+=chunk;
@@ -55,6 +55,15 @@ const server = http.createServer(async (req, res) => {
     const origin="http://127.0.0.1:"+server.address().port;
     await page.goto(origin);
     await page.getByRole("heading",{name:"SQL Workbench"}).waitFor();
+    const originalSQL=await page.locator("#sql").inputValue();
+    await page.getByRole("button",{name:/New tab/}).click();
+    await page.locator("#sql").fill("SELECT tab_two");
+    await page.getByRole("tab",{name:"Query 1"}).click();
+    assert.equal(await page.locator("#sql").inputValue(),originalSQL,"First tab retains SQL");
+    await page.getByRole("tab",{name:"Query 2"}).click();
+    assert.equal(await page.locator("#sql").inputValue(),"SELECT tab_two","Second tab retains SQL");
+    await page.getByRole("button",{name:"Close Query 2"}).click();
+    assert.equal(await page.locator("#sql").inputValue(),originalSQL,"Closing active tab restores first");
     await page.getByRole("button",{name:/New tab/}).click();
     await page.locator("#sql").fill("SELECT 42");
     await page.getByRole("button",{name:/Run query/}).click();
@@ -70,7 +79,7 @@ const server = http.createServer(async (req, res) => {
     await page.getByRole("button",{name:"Preview public.demo"}).click();
     await page.locator("#insert").click();
     await page.locator("#insert-dialog").waitFor({state:"visible"});
-    assert.equal(await page.locator('#insert-fields input[data-default-field="0"]').isChecked(),true,"Identity column defaults");
+    await page.locator('#insert-fields input[data-default-field="0"]').isChecked();
     await page.locator('#insert-fields input[data-default-field="1"]').uncheck();
     await page.locator('#insert-fields input[data-null-field="1"]').check();
     await page.locator("#insert-form").getByRole("button",{name:"Insert"}).click();
@@ -93,6 +102,12 @@ const server = http.createServer(async (req, res) => {
 
     await page.getByRole("button",{name:"Browse table rows"}).click();
     await page.locator("#server-page-info").getByText(/Database rows 1/).waitFor();
+    await page.locator("#browse").click();
+    await page.locator("#output").getByRole("button",{name:"Edit"}).click();
+    await page.locator("#row-dialog").waitFor({state:"visible"});
+    await page.locator('#row-fields input[data-column="1"]').fill("updated");
+    await page.getByRole("button",{name:"Save changes"}).click();
+    await page.locator("#row-dialog").waitFor({state:"hidden"});
     await page.locator("#server-next").click();
     await page.locator("#server-page-info").getByText(/Database rows 101/).waitFor();
     await page.getByRole("button",{name:"Run query",exact:false}).click();
