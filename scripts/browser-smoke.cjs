@@ -6,16 +6,29 @@ const { chromium } = require("playwright");
 
 const html = fs.readFileSync("web/index.html", "utf8");
 let rejectNextChangeset = false;
+let delayNextBrowse = false;
+let releaseBrowse = null;
 const server = http.createServer(async (req, res) => {
   res.setHeader("Content-Type", "application/json; charset=utf-8");
   if (req.url === "/") {
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.end(html);
   } else if (req.url === "/api/schema") {
-    res.end(JSON.stringify([{schema:"public",name:"demo",kind:"table"}]));
+    res.end(JSON.stringify([{schema:"public",name:"demo",kind:"table"},{schema:"public",name:"other",kind:"table"}]));
   } else if (req.url.startsWith("/api/columns")) {
     res.end(JSON.stringify([{name:"id",data_type:"integer",nullable:false,primary_key:true},{name:"label",data_type:"text",nullable:true,primary_key:false}]));
+  } else if (req.url === "/api/delay-browse") {
+    delayNextBrowse = true;
+    res.end(JSON.stringify({enabled:true}));
+  } else if (req.url === "/api/release-browse") {
+    if (releaseBrowse) releaseBrowse();
+    res.end(JSON.stringify({released:true}));
   } else if (req.url.startsWith("/api/table-rows")) {
+    if (delayNextBrowse) {
+      delayNextBrowse = false;
+      await new Promise(resolve=>{releaseBrowse=resolve});
+      releaseBrowse = null;
+    }
     const offset = Number(new URL(req.url,"http://localhost").searchParams.get("offset")||0);
     res.end(JSON.stringify({columns:["id","label"],rows:[[String(offset+1),"original"]],offset,limit:100,has_next:offset===0,stable_order:true}));
   } else if (req.url === "/api/row-change") {
@@ -143,6 +156,15 @@ const server = http.createServer(async (req, res) => {
     await page.getByRole("button",{name:"Run query",exact:false}).click();
     await page.locator("#server-pager").waitFor({state:"hidden"});
     assert.equal(await page.locator("#server-pager").isVisible(),false,"Free SQL hides server pager");
+    await page.evaluate(()=>fetch("/api/delay-browse"));
+    await page.locator("#browse").click();
+    await page.locator("#filter").fill("");
+    await page.getByRole("button",{name:"Preview public.other"}).click();
+    await page.locator("#selected").getByText("public.other").waitFor();
+    await page.evaluate(()=>fetch("/api/release-browse"));
+    await page.waitForTimeout(150);
+    assert.equal(await page.locator("#output .grid").count(),0,"Stale table A must not appear after switching to B");
+    assert.equal(await page.locator("#selected").innerText(),"public.other");
     console.log("Chromium workbench UI smoke tests passed");
   } finally {await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1}).finally(()=>server.close());
