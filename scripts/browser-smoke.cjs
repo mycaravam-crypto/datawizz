@@ -71,13 +71,17 @@ const server = http.createServer(async (req, res) => {
     await page.locator("#output .editable-cell").first().dblclick();
     await page.locator("#output .cell-editor").fill("inline-value");
     await page.locator("#output .cell-editor").press("Enter");
-    await page.locator("#status").getByText(/Completed|Saved/).waitFor();
+    await page.locator("#changes-count").getByText("1 pending row").waitFor();
     await page.locator("#output input[aria-label^='Select row']").first().check();
     await page.locator("#bulk-column").selectOption("1");
     await page.locator("#bulk-value").fill("batch-value");
     page.once("dialog",dialog=>dialog.accept());
     await page.locator("#bulk-apply").click();
-    await page.getByText(/1 of 1 rows updated/).waitFor();
+    await page.getByText(/1 rows staged for review/).waitFor();
+    page.once("dialog",dialog=>dialog.accept());
+    await page.locator("#changes-save").click();
+    await page.locator("#changes-bar").waitFor({state:"hidden"});
+
     await page.getByRole("button",{name:"Browse table rows"}).click();
     await page.locator("#server-page-info").getByText(/Database rows 1/).waitFor();
     await page.locator("#server-next").click();
