@@ -68,6 +68,9 @@ const server = http.createServer(async (req, res) => {
     await page.locator("#sql").fill("SELECT 42");
     await page.getByRole("button",{name:/Run query/}).click();
     await page.locator("#output").getByText("SELECT 42").waitFor();
+    assert.equal(await page.locator("#output").getAttribute("role"),"region");
+    await page.locator("#result-filter").fill("no-such-result");
+    await page.getByText(/No rows match the current filter/).waitFor();
     await page.locator("#result-filter").fill("alpha");
     await page.locator("#output").getByText("alpha").waitFor();
     assert.equal(await page.locator("#output tbody tr").count(),1,"Filter shows one loaded row");
@@ -99,6 +102,7 @@ const server = http.createServer(async (req, res) => {
     page.once("dialog",dialog=>dialog.accept());
     await page.locator("#changes-save").click();
     await page.locator("#changes-bar").waitFor({state:"hidden"});
+    assert.match(await page.locator("#selection-bar").innerText(),/saved atomically/);
 
     await page.getByRole("button",{name:"Browse table rows"}).click();
     await page.locator("#server-page-info").getByText(/Database rows 1/).waitFor();
