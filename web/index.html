@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Datawizz</title>
+<style>
+:root{color-scheme:dark;font:14px system-ui,sans-serif;background:#10151d;color:#e1e7ef}
+*{box-sizing:border-box}body{margin:0}header{padding:14px 18px;border-bottom:1px solid #354154;font-weight:700}
+main{display:grid;grid-template-columns:245px minmax(0,1fr);height:calc(100vh - 51px)}
+aside{border-right:1px solid #354154;overflow:auto;padding:12px}
+section{display:flex;flex-direction:column;min-width:0;padding:12px;gap:10px}
+button{background:#253347;color:#e1e7ef;border:1px solid #42536a;border-radius:5px;padding:7px 11px;cursor:pointer}
+button:hover{background:#354962}button:disabled{opacity:.55;cursor:wait}
+.object{display:block;width:100%;text-align:left;overflow:hidden;text-overflow:ellipsis;margin:3px 0}
+h3{font-size:13px;color:#9bacc2;margin:10px 0}
+textarea{width:100%;min-height:150px;resize:vertical;background:#161f2b;color:#e1e7ef;border:1px solid #42536a;padding:12px;font:13px/1.5 ui-monospace,monospace;border-radius:6px}
+.controls{display:flex;align-items:center;gap:12px}.muted{color:#9bacc2}
+#output{overflow:auto;flex:1;border:1px solid #354154;border-radius:6px}
+table{border-collapse:collapse;min-width:100%;white-space:pre}td,th{border-bottom:1px solid #304055;padding:8px 12px;text-align:left}
+th{background:#253347;position:sticky;top:0}td{max-width:400px;overflow:hidden;text-overflow:ellipsis}
+.null{font-style:italic;color:#8b9caf}#message{white-space:pre-wrap} .error{color:#ff9e9e}
+@media(max-width:650px){main{grid-template-columns:150px minmax(0,1fr)}}
+</style></head><body><header>Datawizz <span class="muted">/ PostgreSQL</span></header>
+<main><aside><h3>DATABASE OBJECTS</h3><div id="objects">Loading…</div><h3>COLUMNS</h3><div id="columns" class="muted">Select an object</div></aside>
+<section><label for="sql">SQL editor</label><textarea id="sql" spellcheck="false">SELECT current_database(), version();</textarea>
+<div class="controls"><button id="run">Run (Ctrl/⌘+Enter)</button><button id="csv" disabled>Export loaded CSV</button><span id="message" class="muted"></span></div>
+<div id="output" aria-live="polite"></div></section></main>
+<script>
+const $=id=>document.getElementById(id);
+const sql=$('sql'), output=$('output'), message=$('message');
+let last=null;
+function text(node,value){node.textContent=value==null?'':String(value)}
+function error(e){message.className='error';text(message,e.message)}
+function quoted(v){return '"'+v.replaceAll('"','""')+'"'}
+async function api(path,options){const r=await fetch(path,options);const data=await r.json();if(!r.ok)throw Error(data.error||'Request failed');return data}
+async function load(){try{
+ const objects=await api('/api/schema');$('objects').replaceChildren();
+ const groups=Map.groupBy?Map.groupBy(objects,o=>o.schema):objects.reduce((m,o)=>(m.set(o.schema,[...(m.get(o.schema)||[]),o]),m),new Map());
+ for(const [schema,items] of groups){const title=document.createElement('h3');text(title,schema);$('objects').append(title);
+ for(const item of items){const b=document.createElement('button');b.className='object';text(b,(item.kind==='view'?'◇ ':'▦ ')+item.name);
+ b.onclick=async()=>{sql.value='SELECT * FROM '+quoted(item.schema)+'.'+quoted(item.name)+' LIMIT 200;';
+ try{const cols=await api('/api/columns?'+new URLSearchParams({schema:item.schema,object:item.name}));
+ text($('columns'),cols.map(c=>c.name+' · '+c.data_type+(c.nullable?'':' · NOT NULL')).join('\n'));$('columns').style.whiteSpace='pre-wrap'}catch(e){error(e)}};$('objects').append(b)}
+ }
+ }catch(e){text($('objects'),e.message)}}
+async function run(){const button=$('run');button.disabled=true;message.className='muted';text(message,'Running…');output.replaceChildren();last=null;$('csv').disabled=true;
+try{const data=await api('/api/query',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sql:sql.value})});last=data;
+text(message,data.rows.length+' rows'+(data.truncated?' (truncated)':'')+' · '+data.duration_ms+' ms · affected: '+data.affected);
+if(data.columns.length){const table=document.createElement('table'),head=document.createElement('tr');
+for(const col of data.columns){const th=document.createElement('th');text(th,col);head.append(th)}const thead=document.createElement('thead');thead.append(head);table.append(thead);
+const body=document.createElement('tbody');for(const row of data.rows){const tr=document.createElement('tr');for(const value of row){const td=document.createElement('td');text(td,value===null?'NULL':value);if(value===null)td.className='null';tr.append(td)}body.append(tr)}table.append(body);output.append(table)}
+$('csv').disabled=!data.columns.length;
+}catch(e){error(e)}finally{button.disabled=false}}
+$('run').onclick=run;sql.addEventListener('keydown',e=>{if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){e.preventDefault();run()}});
+$('csv').onclick=()=>{if(!last)return;const q=v=>'"'+String(v??'').replaceAll('"','""')+'"';const lines=[last.columns,...last.rows].map(row=>row.map(q).join(','));const blob=new Blob([lines.join('\r\n')],{type:'text/csv;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='datawizz-loaded-rows.csv';a.click();URL.revokeObjectURL(url)};
+load();
+</script></body></html>
