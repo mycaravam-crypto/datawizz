@@ -3,8 +3,8 @@ FROM rust:1-bookworm AS builder
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Mount local certificates only for this build step. They are not committed
-# to a builder layer and are not copied into the final runtime image.
+# Source certificates are mounted only for this build step.
+# The resulting builder trust store is not copied into the runtime image.
 # PEM-encoded *.crt and *.pem files in certs/ are supported; no certs is fine.
 RUN --mount=type=bind,source=certs,target=/tmp/corporate-certs,readonly \
     set -eu; \
