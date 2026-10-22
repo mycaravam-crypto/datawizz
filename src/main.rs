@@ -34,7 +34,10 @@ async fn connect(state: &AppState) -> Result<tokio_postgres::Client, (StatusCode
     // No cross-user session state or connection-pool complexity.
     let (client, connection) = tokio_postgres::connect(&state.url, NoTls)
         .await
-        .map_err(|_| api_error(StatusCode::BAD_GATEWAY, "PostgreSQL connection failed"))?;
+        .map_err(|error| {
+            eprintln!("PostgreSQL connection failed: {error}");
+            api_error(StatusCode::BAD_GATEWAY, "PostgreSQL connection failed")
+        })?;
     tokio::spawn(async move {
         if let Err(error) = connection.await {
             eprintln!("PostgreSQL connection closed: {error}");
