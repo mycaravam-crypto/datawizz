@@ -96,7 +96,7 @@ async fn schema(State(state): State<AppState>) -> ApiResult<Vec<DbObject>> {
 struct ColumnRequest { schema: String, object: String }
 
 #[derive(Serialize)]
-struct ColumnInfo { name: String, data_type: String, nullable: bool }
+struct ColumnInfo { name: String, data_type: String, nullable: bool, primary_key: bool }
 
 async fn columns(
     State(state): State<AppState>,
@@ -105,7 +105,12 @@ async fn columns(
     let client = connect(&state).await?;
     let rows = client
         .query(
-            "SELECT a.attname, pg_catalog.format_type(a.atttypid, a.atttypmod), NOT a.attnotnull
+            "SELECT a.attname, pg_catalog.format_type(a.atttypid, a.atttypmod), NOT a.attnotnull,
+                    EXISTS (
+                        SELECT 1 FROM pg_catalog.pg_index i
+                        WHERE i.indrelid = a.attrelid AND i.indisprimary
+                          AND a.attnum = ANY(i.indkey)
+                    )
              FROM pg_catalog.pg_attribute a
              JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
              JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
@@ -123,6 +128,7 @@ async fn columns(
         name: r.get(0),
         data_type: r.get(1),
         nullable: r.get(2),
+        primary_key: r.get(3),
     }).collect()))
 }
 
