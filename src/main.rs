@@ -466,6 +466,90 @@ mod tests {
 
 
 
+
+    #[tokio::test]
+    async fn crud_handles_composite_keys_and_quoted_identifiers() {
+        let Some(state)=test_state(200,10_000) else {return;};
+        let client=connect(&state).await.expect("connect");
+        client.batch_execute(
+            "CREATE TABLE public.\"Datawizz \"\"Pairs\"\"\" (
+                \"Left Key\" integer NOT NULL,
+                \"Right Key\" integer NOT NULL,
+                \"Payload \"\"Text\"\"\" text,
+                PRIMARY KEY (\"Left Key\", \"Right Key\")
+            );
+            INSERT INTO public.\"Datawizz \"\"Pairs\"\"\" VALUES (1,1,'first'),(1,2,'second')"
+        ).await.expect("setup quoted table");
+        let table="Datawizz \"Pairs\"".to_string();
+        let Json(page)=table_rows(State(state.clone()),Query(PageRequest{
+            schema:"public".into(),table:table.clone(),offset:Some(0),limit:Some(10)
+        })).await.expect("browse quoted table");
+        assert_eq!(page.rows.len(),2);
+        assert!(page.stable_order);
+        assert_eq!(page.rows[1][2].as_deref(),Some("second"));
+        let old=vec![Some("1".into()),Some("2".into()),Some("second".into())];
+        let new=vec![Some("1".into()),Some("2".into()),Some("updated".into())];
+        change_row(State(state.clone()),Json(RowChange{
+            schema:"public".into(),table:table.clone(),
+            original:old.clone(),values:Some(new.clone()),delete:false
+        })).await.expect("update composite key row");
+        let Err((status,_))=change_row(State(state.clone()),Json(RowChange{
+            schema:"public".into(),table:table.clone(),
+            original:old,values:Some(new.clone()),delete:false
+        })).await else {panic!("stale update must be rejected")};
+        assert_eq!(status,StatusCode::CONFLICT);
+        let Json(inserted)=insert_row(State(state.clone()),Json(InsertRow{
+            schema:"public".into(),table:table.clone(),fields:vec![
+                InsertField{column:"Left Key".into(),value:Some("2".into())},
+                InsertField{column:"Right Key".into(),value:Some("1".into())},
+                InsertField{column:"Payload \"Text\"".into(),value:None},
+            ]
+        })).await.expect("insert quoted columns");
+        assert_eq!(inserted.affected,1);
+        change_row(State(state),Json(RowChange{
+            schema:"public".into(),table:table.clone(),
+            original:new,values:None,delete:true
+        })).await.expect("delete one composite key row");
+        let count:i64=client.query_one(
+            "SELECT count(*) FROM public.\"Datawizz \"\"Pairs\"\"\"",&[]
+        ).await.expect("count").get(0);
+        assert_eq!(count,2);
+        client.batch_execute("DROP TABLE public.\"Datawizz \"\"Pairs\"\"\"")
+            .await.expect("cleanup");
+    }
+
+    #[tokio::test]
+    async fn crud_rejects_unauthorized_columns_and_duplicate_insert_fields() {
+        let Some(state)=test_state(200,10_000) else {return;};
+        let client=connect(&state).await.expect("connect");
+        client.batch_execute(
+            "CREATE TABLE public.datawizz_insert_validation (
+              id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+              value text NOT NULL DEFAULT 'default'
+            )"
+        ).await.expect("setup");
+        let duplicate=insert_row(State(state.clone()),Json(InsertRow{
+            schema:"public".into(),table:"datawizz_insert_validation".into(),
+            fields:vec![
+                InsertField{column:"value".into(),value:Some("a".into())},
+                InsertField{column:"value".into(),value:Some("b".into())}
+            ]
+        })).await;
+        assert!(duplicate.is_err(),"duplicate columns must not be accepted");
+        let generated=insert_row(State(state.clone()),Json(InsertRow{
+            schema:"public".into(),table:"datawizz_insert_validation".into(),
+            fields:vec![InsertField{column:"id".into(),value:Some("100".into())}]
+        })).await;
+        assert!(generated.is_err(),"identity column must use DEFAULT");
+        let not_null=insert_row(State(state),Json(InsertRow{
+            schema:"public".into(),table:"datawizz_insert_validation".into(),
+            fields:vec![InsertField{column:"value".into(),value:None}]
+        })).await;
+        assert!(not_null.is_err(),"SQL NULL must not bypass constraints");
+        client.batch_execute("DROP TABLE public.datawizz_insert_validation")
+            .await.expect("cleanup");
+    }
+
     #[tokio::test]
     async fn insert_uses_defaults_and_preserves_null() {
         let Some(state)=test_state(200,10_000) else {return;};
