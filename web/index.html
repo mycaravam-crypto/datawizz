@@ -34,11 +34,14 @@
 <div id="server-pager" class="server-pager" hidden><button class="btn small" id="server-prev" type="button">← Previous 100</button><span id="server-page-info" class="note"></span><button class="btn small" id="server-next" type="button">Next 100 →</button></div><div class="footer"><span id="result-note" class="note">Only loaded rows can be exported.</span><div class="buttons"><button id="prev" class="btn small" type="button" disabled>← Previous</button><span id="page" class="note">Page —</span><button id="next" class="btn small" type="button" disabled>Next →</button></div></div></section>
 </main>
 </div>
+<dialog id="row-dialog" aria-label="Edit table row" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:12px;max-height:85vh;max-width:min(95vw,560px);width:100%;overflow:auto">
+<form id="row-form" method="dialog"><h2>Edit row</h2><p class="note">Only editable non-key fields can be changed. Blank text is not SQL NULL.</p><div id="row-fields"></div><div class="buttons" style="justify-content:flex-end;margin-top:16px"><button class="btn" type="button" id="row-cancel">Cancel</button><button class="btn primary" type="submit">Save changes</button></div></form>
+</dialog>
 <script>
 "use strict";
 const $=id=>document.getElementById(id);
 const sql=$("sql"), output=$("output"), message=$("message");
-let objects=[],selected=null,last=null,busy=false,page=0,sortColumn=-1,sortAsc=true,requestId=0,tableMode=false,tableOffset=0,tableHasNext=false,tableOrdered=false;
+let objects=[],selected=null,last=null,busy=false,page=0,sortColumn=-1,sortAsc=true,requestId=0,tableMode=false,tableOffset=0,tableHasNext=false,tableOrdered=false,selectedColumns=[],editingRow=null;
 let tabs=[{id:1,name:"Query 1",sql:sql.value}],activeTab=1,nextTab=2;
 function persistTab(){const tab=tabs.find(t=>t.id===activeTab);if(tab)tab.sql=sql.value}
 function renderTabs(){
@@ -78,7 +81,7 @@ function renderObjects(){
  if(!matching.length)list.append(element("p","note",objects.length?"No matching objects.":"No readable objects found."));
 }
 async function loadObjects(){text($("object-count"),"Loading schemas…");try{objects=await api("/api/schema");renderObjects()}catch(e){objects=[];renderObjects();text($("object-count"),"Explorer unavailable");$("objects").replaceChildren(element("p","error-box",e.message))}}
-async function selectObject(item){selected=item;$("browse-table").disabled=false;$("browse").disabled=false;renderObjects();text($("selected"),item.schema+"."+item.name);sql.value="SELECT * FROM "+quoted(item.schema)+"."+quoted(item.name)+" LIMIT 200;";persistTab();sql.focus();const ticket=++requestId;text($("columns"),"Loading columns…");try{const cols=await api("/api/columns?"+new URLSearchParams({schema:item.schema,object:item.name}));if(ticket!==requestId)return;$("columns").replaceChildren();for(const c of cols){const row=element("div","column-item");row.append(element("strong","",c.name),document.createTextNode(c.data_type+(c.nullable?" · nullable":" · required")+(c.primary_key?" · PRIMARY KEY":"")));$("columns").append(row)}if(!cols.length)text($("columns"),"No columns visible.")}catch(e){if(ticket===requestId)text($("columns"),e.message)}}
+async function selectObject(item){selected=item;selectedColumns=[];tableMode=false;tableHasNext=false;$("browse-table").disabled=false;$("browse").disabled=false;renderObjects();text($("selected"),item.schema+"."+item.name);sql.value="SELECT * FROM "+quoted(item.schema)+"."+quoted(item.name)+" LIMIT 200;";persistTab();sql.focus();const ticket=++requestId;text($("columns"),"Loading columns…");try{const cols=await api("/api/columns?"+new URLSearchParams({schema:item.schema,object:item.name}));if(ticket!==requestId)return;selectedColumns=cols;$("columns").replaceChildren();for(const c of cols){const row=element("div","column-item");row.append(element("strong","",c.name),document.createTextNode(c.data_type+(c.nullable?" · nullable":" · required")+(c.primary_key?" · PRIMARY KEY":"")));$("columns").append(row)}if(!cols.length)text($("columns"),"No columns visible.")}catch(e){if(ticket===requestId)text($("columns"),e.message)}}
 $("filter").addEventListener("input",renderObjects);$("refresh").onclick=loadObjects;
 $("copy").onclick=async()=>{try{await navigator.clipboard.writeText(sql.value);info("SQL copied to clipboard.")}catch(e){info("Clipboard unavailable; select the SQL text to copy it.")}};
 $("clear").onclick=()=>{sql.value="";sql.focus()};
@@ -94,12 +97,26 @@ function renderResults(){
  text($("row-stat"),rows.length+" shown / "+last.rows.length+" loaded");
  if(!last.columns.length){output.append(element("div","empty",last.affected+" affected rows. Statement completed."));return}
  const table=element("table","grid"),thead=element("thead"),head=element("tr");
- const idx=element("th","","#");head.append(idx);
+ const idx=element("th","","#");head.append(idx);if(tableMode&&selected&&selectedColumns.length===last.columns.length&&selectedColumns.some(c=>c.primary_key)&&selected.kind==="table")head.append(element("th","","Actions"));
  last.columns.forEach((name,i)=>{const th=element("th"),b=element("button","",name+(sortColumn===i?(sortAsc?" ↑":" ↓"):" ↕"));b.type="button";b.title="Sort loaded rows by "+name;b.onclick=()=>{sortAsc=sortColumn===i?!sortAsc:true;sortColumn=i;page=0;renderResults()};th.append(b);if(last.column_types&&last.column_types[i])th.append(element("div","note",last.column_types[i]));head.append(th)});
  thead.append(head);table.append(thead);const body=element("tbody");
- for(const record of (tableMode?rows:rows.slice(page*pageSize,(page+1)*pageSize))){const tr=element("tr");tr.append(element("td","row-index",record.i+1));for(const value of record.r){const td=element("td",value===null?"null":"",value===null?"NULL":value);td.title=value===null?"NULL":String(value);tr.append(td)}body.append(tr)}
+ for(const record of (tableMode?rows:rows.slice(page*pageSize,(page+1)*pageSize))){const tr=element("tr");
+ if(tableMode&&selected&&selectedColumns.length===last.columns.length&&selectedColumns.some(c=>c.primary_key)&&selected.kind==="table"){
+ const action=element("td");const edit=element("button","btn small","Edit");edit.type="button";edit.onclick=()=>openRowEditor(record.r);action.append(edit);
+ const remove=element("button","btn small","Delete");remove.type="button";remove.style.marginLeft="6px";remove.onclick=()=>deleteRow(record.r);action.append(remove);tr.append(action);
+ }tr.append(element("td","row-index",record.i+1));for(const value of record.r){const td=element("td",value===null?"null":"",value===null?"NULL":value);td.title=value===null?"NULL":String(value);tr.append(td)}body.append(tr)}
  table.append(body);output.append(table);
 }
+function rowPayload(original,values,remove){return {schema:selected.schema,table:selected.name,original,values,delete:remove}}
+async function deleteRow(original){if(busy||!confirm("Delete this row permanently?"))return;try{await api("/api/row-change",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(rowPayload(original,null,true))});info("Row deleted.");await browseRows()}catch(e){status("Error","error");info(e.message)}}
+function openRowEditor(original){if(busy)return;editingRow=original.slice();const fields=$("row-fields");fields.replaceChildren();
+ selectedColumns.forEach((col,i)=>{if(col.primary_key)return;const wrapper=element("div");wrapper.style.marginBottom="12px";const label=element("label","eyebrow",col.name+" · "+col.data_type);label.style.display="block";wrapper.append(label);
+ const field=element("input","input");field.value=original[i]??"";field.disabled=original[i]===null;field.dataset.column=String(i);wrapper.append(field);
+ const nullLabel=element("label","note");nullLabel.style.display="block";const nullBox=document.createElement("input");nullBox.type="checkbox";nullBox.checked=original[i]===null;nullBox.disabled=!col.nullable;nullBox.onchange=()=>{field.disabled=nullBox.checked};nullBox.dataset.nullColumn=String(i);nullLabel.append(nullBox,document.createTextNode(" SQL NULL"));wrapper.append(nullLabel);fields.append(wrapper)});
+ $("row-dialog").showModal()}
+$("row-cancel").onclick=()=>$("row-dialog").close();
+$("row-form").onsubmit=async e=>{e.preventDefault();if(!editingRow)return;const original=editingRow.slice(),values=editingRow.slice();for(const el of $("row-fields").querySelectorAll("input[data-column]")){const i=Number(el.dataset.column);const nullEl=$("row-fields").querySelector('input[data-null-column="'+i+'"]');values[i]=nullEl.checked?null:el.value}
+ $("row-dialog").close();try{await api("/api/row-change",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(rowPayload(original,values,false))});info("Row updated.");await browseRows()}catch(err){status("Error","error");info(err.message)}};
 async function browseRows(){if(!selected||busy)return;busy=true;status("Loading","running");try{const result=await api("/api/table-rows?"+new URLSearchParams({schema:selected.schema,table:selected.name,offset:tableOffset,limit:100}));tableMode=true;tableHasNext=result.has_next;tableOrdered=result.stable_order;last={columns:result.columns,rows:result.rows,column_types:[]};page=0;sortColumn=-1;renderResults();$("csv").disabled=!result.columns.length;text($("time-stat"),"— ms");info(result.rows.length+" table rows loaded");text($("result-note"),tableOrdered?"Server paging by primary key. CSV contains loaded rows only.":"No primary key: row order can change. CSV contains loaded rows only.");status("Completed","success")}catch(e){status("Error","error");info(e.message)}finally{busy=false}}
 $("browse").onclick=()=>{tableOffset=0;browseRows()};
 $("prev").onclick=()=>{if(tableMode){tableOffset=Math.max(0,tableOffset-100);browseRows()}else if(page>0){page--;renderResults()}};
