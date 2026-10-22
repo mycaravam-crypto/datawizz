@@ -271,6 +271,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn query_error_does_not_expose_sql_text() {
+        let Some(state) = test_state(200, 10_000) else {
+            return;
+        };
+        let Err((status, Json(error))) = execute(
+            State(state),
+            Json(QueryRequest {
+                sql: "SELECT confidential_marker_that_must_not_leak FROM nonexistent_table".into(),
+            }),
+        ).await else {
+            panic!("invalid SQL must return an error");
+        };
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(error.error.contains("SQLSTATE:"));
+        assert!(!error.error.contains("confidential_marker_that_must_not_leak"));
+        assert!(!error.error.contains("nonexistent_table"));
+    }
+
+    #[tokio::test]
     async fn query_times_out_without_crashing() {
         let Some(state) = test_state(200, 100) else {
             return;
