@@ -185,7 +185,8 @@ async fn main() {
         .route("/api/columns", get(columns))
         .route("/api/query", post(execute))
         .with_state(state);
-    let address = format!("127.0.0.1:{port}");
+    let host = env::var("HOST").unwrap_or_else(|_| "127.0.0.1".into());
+    let address = format!("{host}:{port}");
     let listener = tokio::net::TcpListener::bind(&address).await.expect("Cannot bind port");
     println!("Datawizz ready at http://{address}");
     axum::serve(listener, app).await.expect("HTTP server failed");
