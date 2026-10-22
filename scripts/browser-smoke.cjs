@@ -92,7 +92,8 @@ const server = http.createServer(async (req, res) => {
     await page.locator('#insert-fields input[data-null-field="1"]').check();
     await page.locator("#insert-form").getByRole("button",{name:"Insert"}).click();
     await page.locator("#insert-dialog").waitFor({state:"hidden"});
-    await page.getByText(/Row inserted/).waitFor();
+    await page.getByText(/Row inserted; table updated automatically/).waitFor();
+    await page.locator("#output").getByRole("button",{name:"Edit"}).waitFor();
     await page.locator("#browse").click();
     await page.locator("#output .editable-cell").first().dblclick();
     await page.locator("#output .cell-editor").fill("inline-value");
@@ -120,6 +121,7 @@ const server = http.createServer(async (req, res) => {
     await page.locator('#row-fields input[data-column="1"]').fill("updated");
     await page.getByRole("button",{name:"Save changes"}).click();
     await page.locator("#row-dialog").waitFor({state:"hidden"});
+    await page.getByText(/Row updated; changes visible immediately/).waitFor();
     await page.locator("#server-next").click();
     await page.locator("#server-page-info").getByText(/Database rows 101/).waitFor();
     await page.getByRole("button",{name:"Run query",exact:false}).click();

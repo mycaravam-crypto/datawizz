@@ -154,7 +154,7 @@ async function editCell(td,original,column){
  catch(e){status("Error","error");info(e.message);td.classList.remove("cell-editing");text(td,previous===null?"NULL":previous)}
  finally{busy=false}};
  input.onkeydown=e=>{if(e.key==="Escape"){e.preventDefault();restore()}else if(e.key==="Enter"){e.preventDefault();save()}};
- input.onblur=()=>{if(!done)restore()};
+ input.onblur=()=>{if(!done)save()};
 }
 $("bulk-apply").onclick=async()=>{
  if(busy||!canGridEdit()||!selectedRows.size||selectedRows.size>20)return;
@@ -255,11 +255,11 @@ $("insert-form").onsubmit=async e=>{
   fields.push({column:selectedColumns[i].name,value:$("insert-fields").querySelector('input[data-null-field="'+i+'"]').checked?null:el.value});
  }
  $("insert-dialog").close();busy=true;
- try{await api("/api/row-insert",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({schema:selected.schema,table:selected.name,fields})});status("Inserted","success");info("Row inserted. Refresh the table to see changes.");}
+ try{await api("/api/row-insert",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({schema:selected.schema,table:selected.name,fields})});busy=false;tableOffset=0;await browseRows(false);status("Inserted","success");info("Row inserted; table updated automatically.");}
  catch(err){status("Error","error");info(err.message)}finally{busy=false}
 };
 function rowPayload(original,values,remove){return {schema:selected.schema,table:selected.name,original,values,delete:remove}}
-async function deleteRow(original){if(busy||!confirm("Delete this row permanently?"))return;try{await api("/api/row-change",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(rowPayload(original,null,true))});info("Row deleted.");await browseRows()}catch(e){status("Error","error");info(e.message)}}
+async function deleteRow(original){if(busy||!confirm("Delete this row permanently?"))return;try{await api("/api/row-change",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(rowPayload(original,null,true))});await browseRows(false);status("Deleted","success");info("Row deleted; table updated automatically.")}catch(e){status("Error","error");info(e.message)}}
 function openRowEditor(original){if(busy)return;editingRow=original.slice();const fields=$("row-fields");fields.replaceChildren();
  selectedColumns.forEach((col,i)=>{if(col.primary_key)return;const wrapper=element("div");wrapper.style.marginBottom="12px";const label=element("label","eyebrow",col.name+" · "+col.data_type);label.style.display="block";wrapper.append(label);
  const field=element("input","input");field.value=original[i]??"";field.disabled=original[i]===null;field.dataset.column=String(i);wrapper.append(field);
@@ -267,7 +267,7 @@ function openRowEditor(original){if(busy)return;editingRow=original.slice();cons
  $("row-dialog").showModal()}
 $("row-cancel").onclick=()=>$("row-dialog").close();
 $("row-form").onsubmit=async e=>{e.preventDefault();if(!editingRow)return;const original=editingRow.slice(),values=editingRow.slice();for(const el of $("row-fields").querySelectorAll("input[data-column]")){const i=Number(el.dataset.column);const nullEl=$("row-fields").querySelector('input[data-null-column="'+i+'"]');values[i]=nullEl.checked?null:el.value}
- $("row-dialog").close();try{await api("/api/row-change",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(rowPayload(original,values,false))});info("Row updated.");await browseRows()}catch(err){status("Error","error");info(err.message)}};
+ $("row-dialog").close();try{await api("/api/row-change",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(rowPayload(original,values,false))});await browseRows(false);status("Updated","success");info("Row updated; changes visible immediately.")}catch(err){status("Error","error");info(err.message)}};
 async function browseRows(clear=true){if(!selected||busy)return;if(clear){if(changes.size&&!confirm("Discard pending changes and reload table?"))return;changes.clear();updateChanges()}resetSelection();busy=true;status("Loading","running");try{const result=await api("/api/table-rows?"+new URLSearchParams({schema:selected.schema,table:selected.name,offset:tableOffset,limit:100}));tableMode=true;tableHasNext=result.has_next;tableOrdered=result.stable_order;last={columns:result.columns,rows:result.rows,column_types:[]};page=0;sortColumn=-1;renderResults();$("csv").disabled=!result.columns.length;text($("time-stat"),"— ms");info(result.rows.length+" table rows loaded");text($("result-note"),tableOrdered?"Server paging by primary key. CSV contains loaded rows only.":"No primary key: row order can change. CSV contains loaded rows only.");status("Completed","success")}catch(e){status("Error","error");info(e.message)}finally{busy=false}}
 $("browse").onclick=()=>{tableOffset=0;browseRows()};
 $("prev").onclick=()=>{if(tableMode){tableOffset=Math.max(0,tableOffset-100);browseRows()}else if(page>0){page--;renderResults()}};
