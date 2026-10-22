@@ -72,6 +72,11 @@ const server = http.createServer(async (req, res) => {
     await page.locator("#result-filter").fill("no-such-result");
     await page.getByText(/No rows match the current filter/).waitFor();
     await page.locator("#result-filter").fill("alpha");
+    await page.locator("#result-filter-clear").click();
+    assert.equal(await page.locator("#result-filter").inputValue(),"","Clear filter resets search");
+    await page.keyboard.press("Control+Shift+f");
+    assert.equal(await page.locator("#result-filter").evaluate(el=>document.activeElement===el),true,"Shortcut focuses result filter");
+    await page.locator("#result-filter").fill("alpha");
     await page.locator("#output").getByText("alpha").waitFor();
     assert.equal(await page.locator("#output tbody tr").count(),1,"Filter shows one loaded row");
     await page.locator("#result-filter").fill("");
