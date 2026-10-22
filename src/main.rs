@@ -967,6 +967,67 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn query_accepts_comments_dollar_quotes_and_returning() {
+        let Some(state) = test_state(200, 10_000) else {
+            return;
+        };
+        let Json(selected) = execute(
+            State(state.clone()),
+            Json(QueryRequest {
+                sql: "/* comment with ; */ SELECT $tag$semi;colon$tag$ AS value -- trailing ;".into(),
+            }),
+        )
+        .await
+        .expect("comments and semicolons in dollar-quoted strings are one statement");
+        assert_eq!(selected.rows.len(), 1);
+        assert_eq!(selected.rows[0][0].as_deref(), Some("semi;colon"));
+        assert!(!selected.truncated);
+
+        let client = connect(&state).await.expect("connect");
+        client
+            .batch_execute("CREATE TABLE public.datawizz_returning_test (id integer PRIMARY KEY, note text)")
+            .await
+            .expect("create returning test table");
+
+        let Json(inserted) = execute(
+            State(state.clone()),
+            Json(QueryRequest {
+                sql: "INSERT INTO public.datawizz_returning_test VALUES (1, 'created') RETURNING id, note".into(),
+            }),
+        )
+        .await
+        .expect("insert returning");
+        assert_eq!(inserted.columns, vec!["id", "note"]);
+        assert_eq!(inserted.rows, vec![vec![Some("1".into()), Some("created".into())]]);
+        assert!(!inserted.truncated);
+
+        let Json(updated) = execute(
+            State(state.clone()),
+            Json(QueryRequest {
+                sql: "UPDATE public.datawizz_returning_test SET note = 'updated' WHERE id = 1 RETURNING note".into(),
+            }),
+        )
+        .await
+        .expect("update returning");
+        assert_eq!(updated.rows, vec![vec![Some("updated".into())]]);
+
+        let Json(deleted) = execute(
+            State(state),
+            Json(QueryRequest {
+                sql: "DELETE FROM public.datawizz_returning_test WHERE id = 1 RETURNING id".into(),
+            }),
+        )
+        .await
+        .expect("delete returning");
+        assert_eq!(deleted.rows, vec![vec![Some("1".into())]]);
+
+        client
+            .batch_execute("DROP TABLE public.datawizz_returning_test")
+            .await
+            .expect("cleanup returning test table");
+    }
+
+    #[tokio::test]
     async fn query_times_out_without_crashing() {
         let Some(state) = test_state(200, 100) else {
             return;
