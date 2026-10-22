@@ -78,6 +78,7 @@ const server = http.createServer(async (req, res) => {
     await page.getByText(/Row inserted/).waitFor();
     await page.getByRole("button",{name:"Browse table rows"}).click();
     await page.locator("#server-page-info").getByText(/Database rows 1/).waitFor();
+    await page.locator("#browse").click();
     await page.locator("#output").getByRole("button",{name:"Edit"}).click();
     await page.locator("#row-dialog").waitFor({state:"visible"});
     await page.locator('#row-fields input[data-column="1"]').fill("updated");
