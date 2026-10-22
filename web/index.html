@@ -34,6 +34,8 @@
 @media(max-width:920px){.page-heading{align-items:flex-start;flex-wrap:wrap}.results-header{align-items:flex-start;flex-wrap:wrap}.results-header .buttons{justify-content:flex-start}.selection-bar .input{width:150px!important;min-width:0}}
 @media(max-width:670px){.topbar{height:auto;min-height:60px;flex-wrap:wrap;padding-block:10px}.brand{font-size:18px}.brand .tag{display:none}.page-heading{align-items:flex-start}.card-header,.results-header{padding:12px}.toolbar{align-items:flex-start}.buttons{gap:6px}.results-content{max-height:62vh}.grid th,.grid td{padding:9px 10px}.selection-bar,.changes-bar{padding:10px}.selection-bar .input{max-width:100%}.footer{align-items:flex-start}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition:none!important;animation:none!important}}
+
+.review-dialog{background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:14px;width:min(94vw,780px);max-height:88vh;padding:24px}.review-dialog h2{margin:0 0 8px;font-size:20px}.review-scroll{max-height:52vh;overflow:auto;margin-block:16px;border:1px solid var(--border);border-radius:9px}.review-table{width:100%;border-collapse:collapse;font-size:13px}.review-table th,.review-table td{padding:9px 12px;text-align:left;vertical-align:top;border-bottom:1px solid var(--border);overflow-wrap:anywhere;max-width:260px}.review-table th{background:var(--raised);position:sticky;top:0}.review-table td:nth-child(3){color:var(--muted)}.review-table td:nth-child(4){font-weight:650}.review-actions{justify-content:flex-end}.review-null{font-style:italic;color:var(--warn)}@media(max-width:670px){.review-dialog{padding:16px}.review-table th,.review-table td{padding:8px}}
 </style>
 </head>
 <body>
@@ -55,6 +57,14 @@
 <div id="server-pager" class="server-pager" hidden><button class="btn small" id="server-prev" type="button">← Previous 100</button><span id="server-page-info" class="note"></span><button class="btn small" id="server-next" type="button">Next 100 →</button></div><div class="footer"><span id="result-note" class="note">Only loaded rows can be exported.</span><div class="buttons"><button id="prev" class="btn small" type="button" disabled>← Previous</button><span id="page" class="note">Page —</span><button id="next" class="btn small" type="button" disabled>Next →</button></div></div></section>
 </main>
 </div>
+<dialog id="changes-review" aria-labelledby="changes-review-title" class="review-dialog">
+<form method="dialog">
+<h2 id="changes-review-title">Review staged changes</h2>
+<p class="note">Compare original and proposed values. All rows will be committed together; if one conflicts, none are saved.</p>
+<div id="changes-review-summary" class="note" aria-live="polite"></div>
+<div id="changes-review-content" class="review-scroll"></div>
+<div class="buttons review-actions"><button id="changes-review-cancel" class="btn" value="cancel" type="submit">Cancel</button><button id="changes-review-confirm" class="btn primary" type="submit" value="save">Save all atomically</button></div>
+</form></dialog>
 <dialog id="row-dialog" aria-label="Edit table row" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:12px;max-height:85vh;max-width:min(95vw,560px);width:100%;overflow:auto">
 <form id="row-form" method="dialog"><h2>Edit row</h2><p class="note">Only editable non-key fields can be changed. Blank text is not SQL NULL.</p><div id="row-fields"></div><div class="buttons" style="justify-content:flex-end;margin-top:16px"><button class="btn" type="button" id="row-cancel">Cancel</button><button class="btn primary" type="submit">Save changes</button></div></form>
 </dialog>
@@ -91,19 +101,31 @@ function stageRow(index,original,values){
  updateChanges();renderResults();
 }
 $("changes-discard").onclick=()=>{if(changes.size&&confirm("Discard all pending changes?"))discardChanges()};
-$("changes-save").onclick=async()=>{
+function reviewCell(value){const span=element("span",value===null?"review-null":"",value===null?"SQL NULL":String(value));return span}
+function showChangesReview(items){
+ const content=$("changes-review-content");content.replaceChildren();
+ const table=element("table","review-table"),head=element("thead"),tr=element("tr");
+ for(const title of ["Row","Column","Original","Proposed"]){const th=element("th","",title);th.scope="col";tr.append(th)}
+ head.append(tr);table.append(head);const body=element("tbody");
+ for(const item of items){item.values.forEach((value,i)=>{if(value===item.original[i])return;
+ const row=element("tr");row.append(element("td","",String(item.index+1)),element("td","",last.columns[i]));
+ const old=element("td"),next=element("td");old.append(reviewCell(item.original[i]));next.append(reviewCell(value));row.append(old,next);body.append(row)})}
+ table.append(body);content.append(table);text($("changes-review-summary"),items.length+" row(s), "+body.children.length+" changed cell(s)");
+ $("changes-review").showModal();
+}
+$("changes-save").onclick=()=>{
  if(busy||!changes.size)return;
- const items=stagedRows();
- const detail=items.map(x=>"#"+(x.index+1)+": "+x.values.map((v,i)=>v!==x.original[i]?last.columns[i]+" = "+(v===null?"NULL":JSON.stringify(v)):"").filter(Boolean).join(", ")).join("\\n");
- if(!confirm("Review "+items.length+" changed rows:\\n"+detail+"\\n\\nAll changes commit together; on conflict none are saved. Continue?"))return;
- busy=true;
+ showChangesReview(stagedRows());
+};
+$("changes-review").addEventListener("close",async()=>{
+ if($("changes-review").returnValue!=="save"||busy||!changes.size)return;
+ const items=stagedRows();busy=true;$("changes-save").disabled=true;
  try{
   await api("/api/changeset",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({schema:selected.schema,table:selected.name,changes:items.map(({original,values})=>({original,values}))})});
-  changes.clear();updateChanges();busy=false;
-  await browseRows(false);
-  status("Saved","success");info(items.length+" rows saved atomically.");
- }catch(e){busy=false;status("Save rejected","warning");info("No staged rows committed. "+e.message);renderResults()}
-};
+  changes.clear();busy=false;updateChanges();await browseRows(false);status("Saved","success");info(items.length+" rows saved atomically.");
+ }catch(e){busy=false;updateChanges();status("Save rejected","warning");info("No staged rows committed. "+e.message);renderResults()}
+});
+
 const canGridEdit=()=>tableMode&&selected?.kind==="table"&&last?.columns?.length===selectedColumns.length&&selectedColumns.some(c=>c.primary_key);
 function resetSelection(){selectedRows.clear();updateSelection()}
 function updateSelection(){
