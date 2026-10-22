@@ -83,7 +83,7 @@ async function editCell(td,original,column){
  td.replaceChildren(input);td.classList.add("cell-editing");input.focus();input.select();let done=false;
  const restore=()=>{if(done)return;done=true;td.classList.remove("cell-editing");text(td,previous===null?"NULL":previous)};
  const save=async()=>{if(done)return;const value=input.value;if(value===previous){restore();return}done=true;busy=true;status("Saving","running");
- try{const values=original.slice();values[column]=value;await updateOne(original,values);status("Saved","success");info("Cell updated.");await browseRows()}
+ try{const values=original.slice();values[column]=value;await updateOne(original,values);busy=false;status("Saved","success");info("Cell updated.");await browseRows()}
  catch(e){status("Error","error");info(e.message);td.classList.remove("cell-editing");text(td,previous===null?"NULL":previous)}
  finally{busy=false}};
  input.onkeydown=e=>{if(e.key==="Escape"){e.preventDefault();restore()}else if(e.key==="Enter"){e.preventDefault();save()}};
