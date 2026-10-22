@@ -118,7 +118,7 @@ const server = http.createServer(async (req, res) => {
     await page.locator("#changes-bar").waitFor({state:"hidden"});
     assert.match(await page.locator("#selection-bar").innerText(),/saved atomically/);
 
-    await page.getByRole("button",{name:"Browse table rows"}).click();
+    await page.getByRole("button",{name:"View paginated rows (read-only)"}).click();
     await page.locator("#server-page-info").getByText(/Database rows 1/).waitFor();
     await page.locator("#browse").click();
     await page.locator("#output").getByRole("button",{name:"Edit"}).click();
