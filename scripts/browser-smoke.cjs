@@ -100,6 +100,12 @@ const server = http.createServer(async (req, res) => {
     await page.getByText(/Row inserted; table updated automatically/).waitFor();
     await page.locator("#output").getByRole("button",{name:"Edit"}).waitFor();
     await page.locator("#browse").click();
+    await page.locator("#output .grid tbody tr").first().waitFor();
+    const headers=await page.locator("#output .grid thead th").allTextContents();
+    assert.deepEqual(headers.map(v=>v.trim().replace(/\\s+/g," ")),["","Actions","#","id ↕","label ↕"],"Editable grid headers match row cell order");
+    const firstRow=page.locator("#output .grid tbody tr").first();
+    assert.equal(await firstRow.locator("td").count(),headers.length,"Grid body and header have equal column count");
+    assert.equal(await firstRow.locator("td").nth(2).innerText(),"1","Row index aligns with # header");
     await page.locator("#output .editable-cell").first().dblclick();
     await page.locator("#output .cell-editor").fill("inline-value");
     await page.locator("#output .cell-editor").press("Enter");
