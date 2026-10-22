@@ -13,10 +13,17 @@ const server = http.createServer(async (req, res) => {
   } else if (req.url === "/api/schema") {
     res.end(JSON.stringify([{schema:"public",name:"demo",kind:"table"}]));
   } else if (req.url.startsWith("/api/columns")) {
-    res.end(JSON.stringify([{name:"id",data_type:"integer",nullable:false,primary_key:true}]));
+    res.end(JSON.stringify([{name:"id",data_type:"integer",nullable:false,primary_key:true},{name:"label",data_type:"text",nullable:true,primary_key:false}]));
   } else if (req.url.startsWith("/api/table-rows")) {
     const offset = Number(new URL(req.url,"http://localhost").searchParams.get("offset")||0);
-    res.end(JSON.stringify({columns:["id"],rows:[[String(offset+1)]],offset,limit:100,has_next:offset===0,stable_order:true}));
+    res.end(JSON.stringify({columns:["id","label"],rows:[[String(offset+1),"original"]],offset,limit:100,has_next:offset===0,stable_order:true}));
+  } else if (req.url === "/api/row-insert") {
+    let body=""; for await(const chunk of req) body+=chunk;
+    const payload=JSON.parse(body);
+    assert.equal(payload.schema,"public");
+    assert.equal(payload.table,"demo");
+    assert.deepEqual(payload.fields,[{column:"label",value:null}]);
+    res.end(JSON.stringify({affected:1}));
   } else if (req.url === "/api/query") {
     let body=""; for await(const chunk of req) body += chunk;
     const statement=JSON.parse(body).sql;
@@ -44,6 +51,14 @@ const server = http.createServer(async (req, res) => {
     assert.equal(await page.locator("html").getAttribute("data-theme"),"light");
     await page.locator("#filter").fill("demo");
     await page.getByRole("button",{name:"Preview public.demo"}).click();
+    await page.locator("#insert").click();
+    await page.locator("#insert-dialog").waitFor({state:"visible"});
+    assert.equal(await page.locator('#insert-fields input[data-default-field="0"]').isChecked(),true,"Identity column defaults");
+    await page.locator('#insert-fields input[data-default-field="1"]').uncheck();
+    await page.locator('#insert-fields input[data-null-field="1"]').check();
+    await page.locator("#insert-form").getByRole("button",{name:"Insert"}).click();
+    await page.locator("#insert-dialog").waitFor({state:"hidden"});
+    await page.getByText(/Row inserted/).waitFor();
     await page.getByRole("button",{name:"Browse table rows"}).click();
     await page.locator("#server-page-info").getByText(/Database rows 1/).waitFor();
     await page.locator("#server-next").click();
