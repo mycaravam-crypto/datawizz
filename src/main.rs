@@ -350,6 +350,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn table_pagination_reads_multiple_pages() {
+        let Some(state) = test_state(200, 10_000) else { return; };
+        let client = connect(&state).await.expect("connect");
+        // Use a unique schema/object name for deterministic test isolation.
+        client.batch_execute(
+            "CREATE TABLE IF NOT EXISTS public.datawizz_paging_test (id int PRIMARY KEY);
+             TRUNCATE public.datawizz_paging_test;
+             INSERT INTO public.datawizz_paging_test SELECT generate_series(1, 205)"
+        ).await.expect("seed");
+        let make = |offset| PageRequest { schema: "public".into(),
+            table: "datawizz_paging_test".into(), offset: Some(offset), limit: Some(100) };
+        let Json(first) = table_rows(State(state.clone()), Query(make(0))).await.expect("first");
+        let Json(second) = table_rows(State(state.clone()), Query(make(100))).await.expect("second");
+        let Json(third) = table_rows(State(state.clone()), Query(make(200))).await.expect("third");
+        assert_eq!(first.rows.len(), 100);
+        assert_eq!(first.rows[0][0].as_deref(), Some("1"));
+        assert!(first.has_next && first.stable_order);
+        assert_eq!(second.rows[0][0].as_deref(), Some("101"));
+        assert_eq!(third.rows.len(), 5);
+        assert!(!third.has_next);
+        assert!(table_rows(State(state), Query(make(-1))).await.is_err());
+        client.batch_execute("DROP TABLE public.datawizz_paging_test")
+            .await.expect("cleanup");
+    }
+
+    #[tokio::test]
     async fn query_caps_rows_and_marks_truncation() {
         let Some(state) = test_state(200, 10_000) else {
             return;
