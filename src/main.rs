@@ -548,7 +548,8 @@ mod tests {
     use super::*;
 
     fn test_state(max_rows: usize, timeout_ms: u64) -> Option<AppState> {
-        let url = std::env::var("DATABASE_URL").ok()?;
+        let url = std::env::var("DATABASE_URL")
+            .expect("DATABASE_URL is required to run PostgreSQL integration tests");
         Some(AppState {
             url: Arc::new(url),
             max_rows,
