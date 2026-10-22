@@ -22,7 +22,7 @@
 <div class="aside-heading"><span class="eyebrow">Explorer</span><button class="btn small" id="refresh" type="button">↻ Refresh</button></div>
 <label for="filter" class="eyebrow">Filter objects</label><input id="filter" class="input search" placeholder="Search schemas, tables, views…" autocomplete="off">
 <div class="count" id="object-count" aria-live="polite">Loading schemas…</div><nav id="objects" class="tree" aria-label="Database objects"></nav>
-<div class="sidebar-bottom"><div class="eyebrow">Selected object</div><p id="selected" class="note">Select a table or view to inspect columns and prepare a query.</p><button class="btn small" id="browse" type="button" disabled>Browse rows</button><div id="columns" class="column-list"></div><button id="browse-table" class="btn small" type="button" disabled>Browse table rows</button></div>
+<div class="sidebar-bottom"><div class="eyebrow">Selected object</div><p id="selected" class="note">Select a table or view to inspect columns and prepare a query.</p><button class="btn small" id="browse" type="button" disabled>Browse rows</button> <button class="btn small" id="insert" type="button" disabled>Insert row</button><div id="columns" class="column-list"></div><button id="browse-table" class="btn small" type="button" disabled>Browse table rows</button></div>
 </aside>
 <main class="workbench">
 <div class="page-heading"><div><span class="eyebrow">Workspace / Query</span><h1>SQL Workbench</h1><p class="subtext">Explore, query and export from your configured PostgreSQL database.</p></div><span id="status" class="status" role="status" aria-live="polite">Ready</span></div>
@@ -37,6 +37,7 @@
 <dialog id="row-dialog" aria-label="Edit table row" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:12px;max-height:85vh;max-width:min(95vw,560px);width:100%;overflow:auto">
 <form id="row-form" method="dialog"><h2>Edit row</h2><p class="note">Only editable non-key fields can be changed. Blank text is not SQL NULL.</p><div id="row-fields"></div><div class="buttons" style="justify-content:flex-end;margin-top:16px"><button class="btn" type="button" id="row-cancel">Cancel</button><button class="btn primary" type="submit">Save changes</button></div></form>
 </dialog>
+<dialog id="insert-dialog" aria-label="Insert table row" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:12px;max-height:85vh;max-width:min(95vw,560px);width:100%;overflow:auto"><form id="insert-form"><h2>Insert row</h2><p class="note">DEFAULT omits a column. SQL NULL is different from empty text.</p><div id="insert-fields"></div><div class="buttons" style="justify-content:flex-end;margin-top:16px"><button class="btn" type="button" id="insert-cancel">Cancel</button><button class="btn primary" type="submit">Insert</button></div></form></dialog>
 <script>
 "use strict";
 const $=id=>document.getElementById(id);
@@ -81,7 +82,7 @@ function renderObjects(){
  if(!matching.length)list.append(element("p","note",objects.length?"No matching objects.":"No readable objects found."));
 }
 async function loadObjects(){text($("object-count"),"Loading schemas…");try{objects=await api("/api/schema");renderObjects()}catch(e){objects=[];renderObjects();text($("object-count"),"Explorer unavailable");$("objects").replaceChildren(element("p","error-box",e.message))}}
-async function selectObject(item){selected=item;selectedColumns=[];tableMode=false;tableHasNext=false;$("browse-table").disabled=false;$("browse").disabled=false;renderObjects();text($("selected"),item.schema+"."+item.name);sql.value="SELECT * FROM "+quoted(item.schema)+"."+quoted(item.name)+" LIMIT 200;";persistTab();sql.focus();const ticket=++requestId;text($("columns"),"Loading columns…");try{const cols=await api("/api/columns?"+new URLSearchParams({schema:item.schema,object:item.name}));if(ticket!==requestId)return;selectedColumns=cols;$("columns").replaceChildren();for(const c of cols){const row=element("div","column-item");row.append(element("strong","",c.name),document.createTextNode(c.data_type+(c.nullable?" · nullable":" · required")+(c.primary_key?" · PRIMARY KEY":"")));$("columns").append(row)}if(!cols.length)text($("columns"),"No columns visible.")}catch(e){if(ticket===requestId)text($("columns"),e.message)}}
+async function selectObject(item){selected=item;$("insert").disabled=item.kind!=="table";selectedColumns=[];tableMode=false;tableHasNext=false;$("browse-table").disabled=false;$("browse").disabled=false;renderObjects();text($("selected"),item.schema+"."+item.name);sql.value="SELECT * FROM "+quoted(item.schema)+"."+quoted(item.name)+" LIMIT 200;";persistTab();sql.focus();const ticket=++requestId;text($("columns"),"Loading columns…");try{const cols=await api("/api/columns?"+new URLSearchParams({schema:item.schema,object:item.name}));if(ticket!==requestId)return;selectedColumns=cols;$("columns").replaceChildren();for(const c of cols){const row=element("div","column-item");row.append(element("strong","",c.name),document.createTextNode(c.data_type+(c.nullable?" · nullable":" · required")+(c.primary_key?" · PRIMARY KEY":"")));$("columns").append(row)}if(!cols.length)text($("columns"),"No columns visible.")}catch(e){if(ticket===requestId)text($("columns"),e.message)}}
 $("filter").addEventListener("input",renderObjects);$("refresh").onclick=loadObjects;
 $("copy").onclick=async()=>{try{await navigator.clipboard.writeText(sql.value);info("SQL copied to clipboard.")}catch(e){info("Clipboard unavailable; select the SQL text to copy it.")}};
 $("clear").onclick=()=>{sql.value="";sql.focus()};
@@ -113,6 +114,37 @@ function renderResults(){
  }tr.append(element("td","row-index",record.i+1));for(const value of record.r){const td=element("td",value===null?"null":"",value===null?"NULL":value);td.title=value===null?"NULL":String(value);tr.append(td)}body.append(tr)}
  table.append(body);output.append(table);
 }
+
+$("insert-cancel").onclick=()=>$("insert-dialog").close();
+$("insert").onclick=()=>{
+ if(!selected||selected.kind!=="table"||busy)return;
+ const root=$("insert-fields");root.replaceChildren();
+ selectedColumns.forEach((col,i)=>{
+  const wrap=element("div");wrap.style.marginBottom="12px";
+  wrap.append(element("label","eyebrow",col.name+" · "+col.data_type));
+  const field=element("input","input");field.dataset.insertField=String(i);field.disabled=true;
+  const def=document.createElement("input");def.type="checkbox";def.checked=true;def.dataset.defaultField=String(i);
+  const nullBox=document.createElement("input");nullBox.type="checkbox";nullBox.dataset.nullField=String(i);nullBox.disabled=!col.nullable;
+  const set=()=>{field.disabled=def.checked||nullBox.checked;nullBox.disabled=def.checked||!col.nullable};
+  def.onchange=()=>{if(def.checked)nullBox.checked=false;set()};
+  nullBox.onchange=()=>{if(nullBox.checked)def.checked=false;set()};
+  const controls=element("div","note");controls.append(def,document.createTextNode(" DEFAULT  "),nullBox,document.createTextNode(" SQL NULL"));
+  wrap.append(field,controls);root.append(wrap);
+ });
+ $("insert-dialog").showModal();
+};
+$("insert-form").onsubmit=async e=>{
+ e.preventDefault();if(!selected||busy)return;
+ const fields=[];
+ for(const el of $("insert-fields").querySelectorAll("input[data-insert-field]")){
+  const i=Number(el.dataset.insertField);
+  if($("insert-fields").querySelector('input[data-default-field="'+i+'"]').checked)continue;
+  fields.push({column:selectedColumns[i].name,value:$("insert-fields").querySelector('input[data-null-field="'+i+'"]').checked?null:el.value});
+ }
+ $("insert-dialog").close();busy=true;
+ try{await api("/api/row-insert",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({schema:selected.schema,table:selected.name,fields})});status("Inserted","success");info("Row inserted. Refresh the table to see changes.");}
+ catch(err){status("Error","error");info(err.message)}finally{busy=false}
+};
 function rowPayload(original,values,remove){return {schema:selected.schema,table:selected.name,original,values,delete:remove}}
 async function deleteRow(original){if(busy||!confirm("Delete this row permanently?"))return;try{await api("/api/row-change",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(rowPayload(original,null,true))});info("Row deleted.");await browseRows()}catch(e){status("Error","error");info(e.message)}}
 function openRowEditor(original){if(busy)return;editingRow=original.slice();const fields=$("row-fields");fields.replaceChildren();
