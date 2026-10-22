@@ -17,7 +17,7 @@ assert.match(html, /:focus-visible/, "Missing keyboard focus styles");
 assert.match(html, /textContent/, "Dynamic SQL/database strings must render as text");
 const csvFn = scripts[0][1].match(/function csvValue\(v\)\s*\{[\s\S]*?\n\}/);
 assert.ok(csvFn, "CSV serializer must exist");
-const csvValue = vm.runInNewContext(csvFn[0] + "\\ncsvValue");
+const csvValue = vm.runInNewContext(csvFn[0] + "\ncsvValue");
 assert.equal(csvValue("=1+1"), '"\'=1+1"');
 assert.equal(csvValue("  @SUM(A1:A2)"), '"\'  @SUM(A1:A2)"');
 assert.equal(csvValue('a"b,c'), '"a""b,c"');
