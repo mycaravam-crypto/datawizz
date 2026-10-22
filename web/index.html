@@ -155,7 +155,7 @@ function renderResults(){
  const action=element("td");const edit=element("button","btn small","Edit");edit.type="button";edit.onclick=()=>openRowEditor(record.r);action.append(edit);
  const remove=element("button","btn small","Delete");remove.type="button";remove.style.marginLeft="6px";remove.onclick=()=>deleteRow(record.r);action.append(remove);tr.append(action);
  }tr.append(element("td","row-index",record.i+1));record.r.forEach((value,i)=>{const td=element("td",value===null?"null":"",value===null?"NULL":value);td.title=value===null?"NULL":String(value);
- if(canGridEdit()&&!selectedColumns[i].primary_key){td.classList.add("editable-cell");td.title="Double-click to edit "+selectedColumns[i].name;td.ondblclick=()=>editCell(td,record.r,i)}tr.append(td)})body.append(tr)}
+ if(canGridEdit()&&!selectedColumns[i].primary_key){td.classList.add("editable-cell");td.title="Double-click to edit "+selectedColumns[i].name;td.ondblclick=()=>editCell(td,record.r,i)}tr.append(td)});body.append(tr)}
  table.append(body);output.append(table);updateSelection();
 }
 
