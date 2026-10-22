@@ -467,6 +467,45 @@ mod tests {
 
 
 
+
+    #[tokio::test]
+    async fn postgres_restricted_role_enforces_crud_privileges() {
+        let Some(state) = test_state(200, 10_000) else { return; };
+        let client = connect(&state).await.expect("connect");
+        // No login role or credentials are created; SET ROLE limits this one connection.
+        client.batch_execute(
+            "CREATE TABLE public.datawizz_permissions_test (
+                id integer PRIMARY KEY, note text NOT NULL
+             );
+             INSERT INTO public.datawizz_permissions_test VALUES (1, 'before');
+             CREATE ROLE datawizz_permissions_reader NOLOGIN;
+             GRANT USAGE ON SCHEMA public TO datawizz_permissions_reader;
+             GRANT SELECT ON public.datawizz_permissions_test TO datawizz_permissions_reader;
+             SET ROLE datawizz_permissions_reader"
+        ).await.expect("setup restricted role");
+        let read = client.query(
+            "SELECT note FROM public.datawizz_permissions_test WHERE id=1", &[]
+        ).await.expect("SELECT should be allowed");
+        assert_eq!(read[0].get::<_,String>(0), "before");
+        let forbidden_statements = [
+            "INSERT INTO public.datawizz_permissions_test VALUES (2, 'new')",
+            "UPDATE public.datawizz_permissions_test SET note='changed' WHERE id=1",
+            "DELETE FROM public.datawizz_permissions_test WHERE id=1",
+        ];
+        for statement in forbidden_statements {
+            let error = client.batch_execute(statement).await
+                .expect_err("write must be denied to the read-only role");
+            assert_eq!(error.code().map(|code|code.code()),Some("42501"));
+        }
+        client.batch_execute(
+            "RESET ROLE;
+             REVOKE ALL ON public.datawizz_permissions_test FROM datawizz_permissions_reader;
+             REVOKE USAGE ON SCHEMA public FROM datawizz_permissions_reader;
+             DROP ROLE datawizz_permissions_reader;
+             DROP TABLE public.datawizz_permissions_test"
+        ).await.expect("cleanup");
+    }
+
     #[tokio::test]
     async fn crud_handles_composite_keys_and_quoted_identifiers() {
         let Some(state)=test_state(200,10_000) else {return;};
