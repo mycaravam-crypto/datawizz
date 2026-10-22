@@ -299,9 +299,9 @@ async fn change_row(State(state): State<AppState>, Json(req): Json<RowChange>) -
     let table: String = relation.get(2);
     let columns = client.query(
         "SELECT a.attname, pg_catalog.format_type(a.atttypid,a.atttypmod),
-                a.attnum = ANY(COALESCE(
-                  (SELECT i.indkey FROM pg_catalog.pg_index i
-                   WHERE i.indrelid=$1 AND i.indisprimary), '0'::int2vector)),
+                EXISTS (SELECT 1 FROM pg_catalog.pg_index i
+                        WHERE i.indrelid=$1 AND i.indisprimary
+                        AND a.attnum = ANY(i.indkey)),
                 a.attgenerated <> '' OR a.attidentity <> ''
          FROM pg_catalog.pg_attribute a
          WHERE a.attrelid=$1 AND a.attnum>0 AND NOT a.attisdropped
