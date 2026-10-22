@@ -118,10 +118,10 @@ $("bulk-apply").onclick=async()=>{
  if(busy||!canGridEdit()||!selectedRows.size||selectedRows.size>20)return;
  const index=Number($("bulk-column").value),col=selectedColumns[index],isNull=$("bulk-null").checked;
  if(!col||col.primary_key||(isNull&&!col.nullable)){info("Choose an editable column and valid value.");return}
- const rows=[...selectedRows.values()].map(r=>r.slice()),value=isNull?null:$("bulk-value").value;
+ const rows=[...selectedRows.entries()].map(([rowIndex,original])=>({rowIndex,original:original.slice()})),value=isNull?null:$("bulk-value").value;
  if(!confirm("Update "+rows.length+" selected rows in "+col.name+"? Changes are independent and cannot be rolled back together."))return;
  busy=true;$("bulk-apply").disabled=true;let saved=0;
- for(const original of rows){const rowIndex=last.rows.indexOf(original);const existing=changes.get(rowIndex);const values=existing?existing.values.slice():original.slice();values[index]=value;stageRow(rowIndex,original,values);saved++}
+ for(const {rowIndex,original} of rows){const existing=changes.get(rowIndex);const values=existing?existing.values.slice():original.slice();values[index]=value;stageRow(rowIndex,original,values);saved++}
  busy=false;resetSelection();renderResults();status("Staged","warning");info(saved+" rows staged for review; nothing written to PostgreSQL yet.");
 };
 let tablePage=null,tableRequest=0;
