@@ -153,7 +153,12 @@ async fn execute(State(state): State<AppState>, Json(req): Json<QueryRequest>) -
                 if result.rows.len() < state.max_rows {
                     result.rows.push((0..row.len()).map(|i| row.get(i).map(str::to_owned)).collect());
                 } else {
+                    // Stop reading after the first excess row. Draining the
+                    // stream would defeat the response cap for large results.
+                    // Each request owns its connection, which is not reused
+                    // after this incomplete result stream is dropped.
                     result.truncated = true;
+                    break;
                 }
             }
             SimpleQueryMessage::CommandComplete(count) => result.affected = count,
