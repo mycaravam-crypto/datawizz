@@ -836,6 +836,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn optimistic_edit_accepts_numeric_scale_and_boolean_wire_formats() {
+        let Some(state)=test_state(200,10_000) else {return;};
+        let client=connect(&state).await.expect("connect");
+        client.batch_execute(
+            "CREATE TABLE public.datawizz_typed_edit_test (
+                id integer PRIMARY KEY, title text, price numeric(10,2), enabled boolean);
+             INSERT INTO public.datawizz_typed_edit_test VALUES (1,'Mechanical keyboard',89.00,true)"
+        ).await.expect("seed");
+        let req=PageRequest{schema:"public".into(),table:"datawizz_typed_edit_test".into(),offset:Some(0),limit:Some(10)};
+        let Json(page)=table_rows(State(state.clone()),Query(req)).await.expect("load row");
+        assert_eq!(page.rows[0][2].as_deref(),Some("89.00"));
+        assert_eq!(page.rows[0][3].as_deref(),Some("t"));
+        let old=page.rows[0].clone();
+        let mut changed=old.clone();
+        changed[1]=Some("Mechanical keyboard updated".into());
+        change_row(State(state.clone()),Json(RowChange{
+            schema:"public".into(),table:"datawizz_typed_edit_test".into(),
+            original:old.clone(),values:Some(changed.clone()),delete:false
+        })).await.expect("typed snapshot update must succeed");
+        let row=client.query_one("SELECT title,price,enabled FROM public.datawizz_typed_edit_test WHERE id=1",&[]).await.expect("read");
+        assert_eq!(row.get::<_,String>(0),"Mechanical keyboard updated");
+        assert!(row.get::<_,bool>(2));
+        let Err((status,_))=change_row(State(state.clone()),Json(RowChange{
+            schema:"public".into(),table:"datawizz_typed_edit_test".into(),
+            original:old,values:Some(changed.clone()),delete:false
+        })).await else {panic!("stale typed snapshot must conflict")};
+        assert_eq!(status,StatusCode::CONFLICT);
+        let mut batch=changed.clone();
+        batch[1]=Some("Batch updated".into());
+        let Json(saved)=apply_changeset(State(state),Json(ChangesetRequest{
+            schema:"public".into(),table:"datawizz_typed_edit_test".into(),
+            changes:vec![ChangesetItem{original:changed,values:batch}],
+        })).await.expect("typed changeset should succeed");
+        assert_eq!(saved.affected,1);
+        client.batch_execute("DROP TABLE public.datawizz_typed_edit_test").await.expect("cleanup");
+    }
+
+    #[tokio::test]
     async fn table_pagination_reads_multiple_pages() {
         let Some(state) = test_state(200, 10_000) else { return; };
         let client = connect(&state).await.expect("connect");
