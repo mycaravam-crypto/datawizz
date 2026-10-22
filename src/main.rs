@@ -320,7 +320,7 @@ async fn change_row(State(state): State<AppState>, Json(req): Json<RowChange>) -
         // Compare the full originally loaded row to reject concurrent modifications.
         let name: String = c.get(0);
         args.push(req.original[i].clone());
-        where_parts.push(format!("{}::text IS NOT DISTINCT FROM ${}",quote_ident(&name),args.len()));
+        where_parts.push(format!("{} IS NOT DISTINCT FROM CAST(${}::text AS {})",quote_ident(&name),args.len(),c.get::<_,String>(1)));
     }
     let qualified=format!("{}.{}",quote_ident(&schema),quote_ident(&table));
     let sql = if req.delete {
@@ -419,7 +419,7 @@ async fn apply_changeset(
         for (i,col) in columns.iter().enumerate() {
             let name:String=col.get(0);
             args.push(change.original[i].clone());
-            predicates.push(format!("{}::text IS NOT DISTINCT FROM ${}",quote_ident(&name),args.len()));
+            predicates.push(format!("{} IS NOT DISTINCT FROM CAST(${}::text AS {})",quote_ident(&name),args.len(),col.get::<_,String>(1)));
         }
         for (i,col) in columns.iter().enumerate() {
             if change.values[i]==change.original[i] {continue}
