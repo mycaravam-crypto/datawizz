@@ -139,7 +139,9 @@ const server = http.createServer(async (req, res) => {
     await page.getByText(/No staged rows committed/).waitFor();
     await page.locator("#changes-count").getByText("1 pending row").waitFor();
     assert.equal(await page.locator("#output .pending-cell").count(),1,"Conflict retains draft");
+    page.once("dialog",dialog=>dialog.accept());
     await page.getByRole("button",{name:"Run query",exact:false}).click();
+    await page.locator("#server-pager").waitFor({state:"hidden"});
     assert.equal(await page.locator("#server-pager").isVisible(),false,"Free SQL hides server pager");
     console.log("Chromium workbench UI smoke tests passed");
   } finally {await browser.close();}
