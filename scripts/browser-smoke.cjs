@@ -104,8 +104,11 @@ const server = http.createServer(async (req, res) => {
     page.once("dialog",dialog=>dialog.accept());
     await page.locator("#bulk-apply").click();
     await page.getByText(/1 rows staged for review/).waitFor();
-    page.once("dialog",dialog=>dialog.accept());
     await page.locator("#changes-save").click();
+    await page.locator("#changes-review").waitFor({state:"visible"});
+    await page.locator("#changes-review-summary").getByText(/1 row\(s\), 1 changed cell\(s\)/).waitFor();
+    await page.locator("#changes-review").getByText("batch-value").waitFor();
+    await page.locator("#changes-review-confirm").click();
     await page.locator("#changes-bar").waitFor({state:"hidden"});
     assert.match(await page.locator("#selection-bar").innerText(),/saved atomically/);
 
