@@ -13,11 +13,11 @@ const server = http.createServer(async (req, res) => {
   } else if (req.url === "/api/schema") {
     res.end(JSON.stringify([{schema:"public",name:"demo",kind:"table"}]));
   } else if (req.url.startsWith("/api/columns")) {
-    res.end(JSON.stringify([{name:"id",data_type:"integer",nullable:false,primary_key:true}]));
+    res.end(JSON.stringify([{name:"id",data_type:"integer",nullable:false,primary_key:true},{name:"label",data_type:"text",nullable:true,primary_key:false}]));
   } else if (req.url.startsWith("/api/table-rows")) {
     const offset = Number(new URL(req.url,"http://localhost").searchParams.get("offset")||0);
-    res.end(JSON.stringify({columns:["id"],rows:[[String(offset+1)]],offset,limit:100,has_next:offset===0,stable_order:true}));
-  } else if (req.url === "/api/query") {
+    res.end(JSON.stringify({columns:["id","label"],rows:[[String(offset+1),"original"]],offset,limit:100,has_next:offset===0,stable_order:true}));
+  } else if (req.url === "/api/row-change") {\n    let body=""; for await(const chunk of req) body+=chunk;\n    const payload=JSON.parse(body);\n    assert.equal(payload.schema,"public");\n    assert.equal(payload.table,"demo");\n    assert.deepEqual(payload.original,["1","original"]);\n    assert.deepEqual(payload.values,["1","updated"]);\n    res.end(JSON.stringify({affected:1}));\n  } else if (req.url === "/api/query") {
     let body=""; for await(const chunk of req) body += chunk;
     const statement=JSON.parse(body).sql;
     res.end(JSON.stringify({columns:["value"],column_types:["text"],rows:[[statement],[null],["alpha"]],affected:0,truncated:false,duration_ms:3}));
@@ -31,6 +31,15 @@ const server = http.createServer(async (req, res) => {
     const origin="http://127.0.0.1:"+server.address().port;
     await page.goto(origin);
     await page.getByRole("heading",{name:"SQL Workbench"}).waitFor();
+    const originalSQL=await page.locator("#sql").inputValue();
+    await page.getByRole("button",{name:/New tab/}).click();
+    await page.locator("#sql").fill("SELECT tab_two");
+    await page.getByRole("tab",{name:"Query 1"}).click();
+    assert.equal(await page.locator("#sql").inputValue(),originalSQL,"First tab retains SQL");
+    await page.getByRole("tab",{name:"Query 2"}).click();
+    assert.equal(await page.locator("#sql").inputValue(),"SELECT tab_two","Second tab retains SQL");
+    await page.getByRole("button",{name:"Close Query 2"}).click();
+    assert.equal(await page.locator("#sql").inputValue(),originalSQL,"Closing active tab restores first");
     await page.getByRole("button",{name:/New tab/}).click();
     await page.locator("#sql").fill("SELECT 42");
     await page.getByRole("button",{name:/Run query/}).click();
@@ -46,6 +55,11 @@ const server = http.createServer(async (req, res) => {
     await page.getByRole("button",{name:"Preview public.demo"}).click();
     await page.getByRole("button",{name:"Browse table rows"}).click();
     await page.locator("#server-page-info").getByText(/Database rows 1/).waitFor();
+    await page.locator("#output").getByRole("button",{name:"Edit"}).click();
+    await page.locator("#row-dialog").waitFor({state:"visible"});
+    await page.locator('#row-fields input[data-column="1"]').fill("updated");
+    await page.getByRole("button",{name:"Save changes"}).click();
+    await page.locator("#row-dialog").waitFor({state:"hidden"});
     await page.locator("#server-next").click();
     await page.locator("#server-page-info").getByText(/Database rows 101/).waitFor();
     await page.getByRole("button",{name:"Run query",exact:false}).click();
