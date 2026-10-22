@@ -23,11 +23,11 @@ th{background:#253347;position:sticky;top:0}td{max-width:400px;overflow:hidden;t
 <main><aside><h3>DATABASE OBJECTS</h3><input id="filter" type="search" placeholder="Filter objects" aria-label="Filter database objects"><div id="objects">Loading…</div><h3>COLUMNS</h3><div id="columns" class="muted">Select an object</div></aside>
 <section><label for="sql">SQL editor</label><textarea id="sql" spellcheck="false">SELECT current_database(), version();</textarea>
 <div class="controls"><button id="run">Run (Ctrl/⌘+Enter)</button><button id="csv" disabled>Export loaded CSV</button><span id="message" class="muted"></span></div>
-<div id="output" aria-live="polite"></div></section></main>
+<div id="pager" class="controls" hidden><button id="prev">Previous</button><span id="page-info" class="muted"></span><button id="next">Next</button></div><div id="output" aria-live="polite"></div></section></main>
 <script>
 const $=id=>document.getElementById(id);
 const sql=$('sql'), output=$('output'), message=$('message');
-let last=null; let knownObjects=[];
+let last=null; let knownObjects=[]; let page=null;
 function text(node,value){node.textContent=value==null?'':String(value)}
 function error(e){message.className='error';text(message,e.message)}
 function quoted(v){return '"'+v.replaceAll('"','""')+'"'}
@@ -36,23 +36,25 @@ function renderObjects(){const filter=$('filter').value.toLowerCase().trim();con
  const groups=Map.groupBy?Map.groupBy(objects,o=>o.schema):objects.reduce((m,o)=>(m.set(o.schema,[...(m.get(o.schema)||[]),o]),m),new Map());
  for(const [schema,items] of groups){const title=document.createElement('h3');text(title,schema);$('objects').append(title);
  for(const item of items){const b=document.createElement('button');b.className='object';text(b,(item.kind==='view'?'◇ ':'▦ ')+item.name);
- b.onclick=async()=>{sql.value='SELECT * FROM '+quoted(item.schema)+'.'+quoted(item.name)+' LIMIT 200;';
+ b.onclick=async()=>{sql.value='SELECT * FROM '+quoted(item.schema)+'.'+quoted(item.name)+' LIMIT 200;';page={schema:item.schema,table:item.name,offset:0};await loadPage();
  try{const cols=await api('/api/columns?'+new URLSearchParams({schema:item.schema,object:item.name}));
  text($('columns'),cols.map(c=>c.name+' · '+c.data_type+(c.primary_key?' · PK':'')+(c.nullable?'':' · NOT NULL')).join('\n'));$('columns').style.whiteSpace='pre-wrap'}catch(e){error(e)}};$('objects').append(b)}
  }
 }
 async function load(){try{knownObjects=await api('/api/schema');renderObjects()}catch(e){text($('objects'),e.message)}}
 $('filter').addEventListener('input',renderObjects);
-async function run(){const button=$('run');button.disabled=true;message.className='muted';text(message,'Running…');output.replaceChildren();last=null;$('csv').disabled=true;
+function renderGrid(columns,rows,types=[]){output.replaceChildren();const table=document.createElement('table'),head=document.createElement('tr');for(const [i,col] of columns.entries()){const th=document.createElement('th');text(th,col+(types[i]?' · '+types[i]:''));head.append(th)}const thead=document.createElement('thead');thead.append(head);table.append(thead);const body=document.createElement('tbody');for(const row of rows){const tr=document.createElement('tr');for(const value of row){const td=document.createElement('td');text(td,value===null?'NULL':value);if(value===null)td.className='null';tr.append(td)}body.append(tr)}table.append(body);output.append(table)}
+async function loadPage(){if(!page)return;const state={...page};$('pager').hidden=true;message.className='muted';text(message,'Loading table…');try{const data=await api('/api/table-rows?'+new URLSearchParams({...state,limit:100}));if(!page||page.schema!==state.schema||page.table!==state.table||page.offset!==state.offset)return;renderGrid(data.columns,data.rows);last={columns:data.columns,rows:data.rows};$('csv').disabled=!data.columns.length;$('pager').hidden=false;$('prev').disabled=!data.offset;$('next').disabled=!data.has_next;text($('page-info'),'Rows '+(data.rows.length?data.offset+1:0)+'–'+(data.offset+data.rows.length)+(data.stable_order?' · ordered by primary key':' · no primary key: order may change'));text(message,data.rows.length+' rows loaded');}catch(e){error(e)}}
+$('prev').onclick=()=>{if(page){page.offset=Math.max(0,page.offset-100);loadPage()}};
+$('next').onclick=()=>{if(page){page.offset+=100;loadPage()}};
+async function run(){page=null;$('pager').hidden=true;const button=$('run');button.disabled=true;message.className='muted';text(message,'Running…');output.replaceChildren();last=null;$('csv').disabled=true;
 try{const data=await api('/api/query',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sql:sql.value})});last=data;
 const summary=data.columns.length
  ? (data.rows.length+' row'+(data.rows.length===1?'':'s')+(data.truncated?' (more rows available; result capped)':''))
  : ('Command completed · '+data.affected+' affected');
 text(message,summary+' · '+data.duration_ms+' ms');
 if(data.columns.length && data.rows.length===0){const empty=document.createElement('p');empty.className='muted';text(empty,'Query completed: no rows returned.');output.append(empty)}
-if(data.columns.length){const table=document.createElement('table'),head=document.createElement('tr');
-for(const [i,col] of data.columns.entries()){const th=document.createElement('th');const type=(data.column_types||[])[i]||'unknown';text(th,col+' · '+type);th.title='PostgreSQL type: '+type;head.append(th)}const thead=document.createElement('thead');thead.append(head);table.append(thead);
-const body=document.createElement('tbody');for(const row of data.rows){const tr=document.createElement('tr');for(const value of row){const td=document.createElement('td');text(td,value===null?'NULL':value);if(value===null)td.className='null';tr.append(td)}body.append(tr)}table.append(body);output.append(table)}
+if(data.columns.length)renderGrid(data.columns,data.rows,data.column_types||[]);
 $('csv').disabled=!data.columns.length;
 }catch(e){error(e)}finally{button.disabled=false}}
 $('run').onclick=run;sql.addEventListener('keydown',e=>{if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){e.preventDefault();run()}});
