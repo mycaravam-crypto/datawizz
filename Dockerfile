@@ -10,5 +10,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /build/target/release/datawizz /usr/local/bin/datawizz
 USER 65532:65532
+ENV HOST=0.0.0.0
 EXPOSE 3000
 ENTRYPOINT ["datawizz"]
