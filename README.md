@@ -31,27 +31,15 @@ docker compose down
 
 ## Corporate TLS interception during Docker build
 
-The builder installs normal system CAs by default. If your company intercepts TLS and your Docker build cannot fetch crates.io, provide the **trusted PEM-encoded corporate CA** locally in `certs/company-ca.crt`. The `certs/` directory is excluded from the Docker build context and Git tracking should be prevented by a local `.git/info/exclude` entry (or your global gitignore).
+Place any required **PEM-encoded** corporate root/intermediate CA certificates in `certs/`, using `.crt` or `.pem` extensions. Multiple files are supported. The certificates are mounted only in a Docker BuildKit build step and included in the builder trust store, **not in the final runtime image**. The directory is ignored by Git except for `certs/.gitkeep`.
 
-For the standalone build:
+Build with either command (no extra secret or override configuration required):
 ```sh
-docker build --secret id=corporate_ca,src=certs/company-ca.crt -t datawizz:local .
+docker build -t datawizz:local .
+docker compose up --build
 ```
 
-For Compose, set the optional BuildKit secret in `compose.override.yaml` (ignored locally via `.git/info/exclude`):
-```yaml
-services:
-  app:
-    build:
-      secrets:
-        - corporate_ca
-secrets:
-  corporate_ca:
-    file: ./certs/company-ca.crt
-```
-Then run `docker compose up --build`.
-
-Never disable TLS verification or commit corporate CA material unintentionally. The CA is mounted only during the builder step; it is **not** included in the final runtime image. PostgreSQL's current driver still uses `NoTls`.
+If certificates are installed or replaced, use `docker compose build --no-cache app` to force the CA setup to run again. This is for TLS interception when downloading Rust crates; PostgreSQL traffic still uses `NoTls`. Never disable certificate verification or commit your certificates.
 
 ## Build using Docker (no local Cargo)
 
