@@ -11,6 +11,7 @@ button{background:#253347;color:#e1e7ef;border:1px solid #42536a;border-radius:5
 button:hover{background:#354962}button:disabled{opacity:.55;cursor:wait}
 .object{display:block;width:100%;text-align:left;overflow:hidden;text-overflow:ellipsis;margin:3px 0}
 h3{font-size:13px;color:#9bacc2;margin:10px 0}
+input[type=search]{width:100%;padding:8px;background:#161f2b;color:#e1e7ef;border:1px solid #42536a;border-radius:5px}
 textarea{width:100%;min-height:150px;resize:vertical;background:#161f2b;color:#e1e7ef;border:1px solid #42536a;padding:12px;font:13px/1.5 ui-monospace,monospace;border-radius:6px}
 .controls{display:flex;align-items:center;gap:12px}.muted{color:#9bacc2}
 #output{overflow:auto;flex:1;border:1px solid #354154;border-radius:6px}
@@ -19,28 +20,29 @@ th{background:#253347;position:sticky;top:0}td{max-width:400px;overflow:hidden;t
 .null{font-style:italic;color:#8b9caf}#message{white-space:pre-wrap} .error{color:#ff9e9e}
 @media(max-width:650px){main{grid-template-columns:150px minmax(0,1fr)}}
 </style></head><body><header>Datawizz <span class="muted">/ PostgreSQL</span></header>
-<main><aside><h3>DATABASE OBJECTS</h3><div id="objects">Loading…</div><h3>COLUMNS</h3><div id="columns" class="muted">Select an object</div></aside>
+<main><aside><h3>DATABASE OBJECTS</h3><input id="filter" type="search" placeholder="Filter objects" aria-label="Filter database objects"><div id="objects">Loading…</div><h3>COLUMNS</h3><div id="columns" class="muted">Select an object</div></aside>
 <section><label for="sql">SQL editor</label><textarea id="sql" spellcheck="false">SELECT current_database(), version();</textarea>
 <div class="controls"><button id="run">Run (Ctrl/⌘+Enter)</button><button id="csv" disabled>Export loaded CSV</button><span id="message" class="muted"></span></div>
 <div id="output" aria-live="polite"></div></section></main>
 <script>
 const $=id=>document.getElementById(id);
 const sql=$('sql'), output=$('output'), message=$('message');
-let last=null;
+let last=null; let knownObjects=[];
 function text(node,value){node.textContent=value==null?'':String(value)}
 function error(e){message.className='error';text(message,e.message)}
 function quoted(v){return '"'+v.replaceAll('"','""')+'"'}
 async function api(path,options){const r=await fetch(path,options);const data=await r.json();if(!r.ok)throw Error(data.error||'Request failed');return data}
-async function load(){try{
- const objects=await api('/api/schema');$('objects').replaceChildren();
+function renderObjects(){const filter=$('filter').value.toLowerCase().trim();const objects=knownObjects.filter(o=>(o.schema+'.'+o.name).toLowerCase().includes(filter));$('objects').replaceChildren();
  const groups=Map.groupBy?Map.groupBy(objects,o=>o.schema):objects.reduce((m,o)=>(m.set(o.schema,[...(m.get(o.schema)||[]),o]),m),new Map());
  for(const [schema,items] of groups){const title=document.createElement('h3');text(title,schema);$('objects').append(title);
  for(const item of items){const b=document.createElement('button');b.className='object';text(b,(item.kind==='view'?'◇ ':'▦ ')+item.name);
  b.onclick=async()=>{sql.value='SELECT * FROM '+quoted(item.schema)+'.'+quoted(item.name)+' LIMIT 200;';
  try{const cols=await api('/api/columns?'+new URLSearchParams({schema:item.schema,object:item.name}));
- text($('columns'),cols.map(c=>c.name+' · '+c.data_type+(c.nullable?'':' · NOT NULL')).join('\n'));$('columns').style.whiteSpace='pre-wrap'}catch(e){error(e)}};$('objects').append(b)}
+ text($('columns'),cols.map(c=>c.name+' · '+c.data_type+(c.primary_key?' · PK':'')+(c.nullable?'':' · NOT NULL')).join('\n'));$('columns').style.whiteSpace='pre-wrap'}catch(e){error(e)}};$('objects').append(b)}
  }
- }catch(e){text($('objects'),e.message)}}
+}
+async function load(){try{knownObjects=await api('/api/schema');renderObjects()}catch(e){text($('objects'),e.message)}}
+$('filter').addEventListener('input',renderObjects);
 async function run(){const button=$('run');button.disabled=true;message.className='muted';text(message,'Running…');output.replaceChildren();last=null;$('csv').disabled=true;
 try{const data=await api('/api/query',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sql:sql.value})});last=data;
 text(message,data.rows.length+' rows'+(data.truncated?' (truncated)':'')+' · '+data.duration_ms+' ms · affected: '+data.affected);
@@ -50,6 +52,6 @@ const body=document.createElement('tbody');for(const row of data.rows){const tr=
 $('csv').disabled=!data.columns.length;
 }catch(e){error(e)}finally{button.disabled=false}}
 $('run').onclick=run;sql.addEventListener('keydown',e=>{if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){e.preventDefault();run()}});
-$('csv').onclick=()=>{if(!last)return;const q=v=>'"'+String(v??'').replaceAll('"','""')+'"';const lines=[last.columns,...last.rows].map(row=>row.map(q).join(','));const blob=new Blob([lines.join('\r\n')],{type:'text/csv;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='datawizz-loaded-rows.csv';a.click();URL.revokeObjectURL(url)};
+$('csv').onclick=()=>{if(!last)return;const q=v=>{let s=String(v??'');if(/^[=+@-]/.test(s))s="'"+s;return '"'+s.replaceAll('"','""')+'"'};const lines=[last.columns,...last.rows].map(row=>row.map(q).join(','));const blob=new Blob([lines.join('\r\n')],{type:'text/csv;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='datawizz-loaded-rows.csv';a.click();URL.revokeObjectURL(url)};
 load();
 </script></body></html>
