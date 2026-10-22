@@ -1,0 +1,13 @@
+name: Build
+on:
+  push:
+  pull_request:
+jobs:
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build release container
+        run: docker build -t datawizz:ci .
+      - name: Run Rust unit tests in builder
+        run: docker run --rm -v "$PWD:/work" -w /work rust:1-bookworm cargo test
