@@ -355,6 +355,162 @@ async fn change_row(State(state): State<AppState>, Json(req): Json<RowChange>) -
     Ok(Json(ChangeResult{affected:1}))
 }
 
+
+
+#[derive(Deserialize)]
+struct ChangesetRequest {
+    schema: String,
+    table: String,
+    changes: Vec<ChangesetItem>,
+}
+
+#[derive(Deserialize)]
+struct ChangesetItem {
+    original: Vec<Option<String>>,
+    values: Vec<Option<String>>,
+}
+
+// All rows are updated on ONE PostgreSQL connection and ONE transaction.
+// Any error or stale original row drops the transaction without a commit.
+async fn apply_changeset(
+    State(state): State<AppState>,
+    Json(req): Json<ChangesetRequest>,
+) -> ApiResult<ChangeResult> {
+    if req.changes.is_empty() || req.changes.len() > 20 {
+        return Err(api_error(StatusCode::BAD_REQUEST, "Changeset must contain 1 to 20 rows"));
+    }
+    let mut client = connect(&state).await?;
+    let relation = client.query_opt(
+        "SELECT c.oid,n.nspname,c.relname FROM pg_catalog.pg_class c
+         JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+         WHERE n.nspname=$1 AND c.relname=$2 AND c.relkind IN ('r','p')
+           AND has_schema_privilege(n.oid,'USAGE')
+           AND has_table_privilege(c.oid,'SELECT')
+           AND has_table_privilege(c.oid,'UPDATE')",
+        &[&req.schema,&req.table],
+    ).await.map_err(|e| postgres_error(&e))?
+     .ok_or_else(||api_error(StatusCode::FORBIDDEN,"Table is not editable or access denied"))?;
+    let oid:u32=relation.get(0);
+    let schema:String=relation.get(1);
+    let table:String=relation.get(2);
+    let columns=client.query(
+        "SELECT a.attname,pg_catalog.format_type(a.atttypid,a.atttypmod),
+                EXISTS (SELECT 1 FROM pg_catalog.pg_index i
+                        WHERE i.indrelid=$1 AND i.indisprimary
+                          AND a.attnum=ANY(i.indkey)),
+                a.attgenerated <> '' OR a.attidentity <> ''
+         FROM pg_catalog.pg_attribute a
+         WHERE a.attrelid=$1 AND a.attnum>0 AND NOT a.attisdropped
+         ORDER BY a.attnum",
+        &[&oid],
+    ).await.map_err(|e| postgres_error(&e))?;
+    if columns.is_empty() || !columns.iter().any(|c|c.get::<_,bool>(2)) {
+        return Err(api_error(StatusCode::BAD_REQUEST,"Primary key required"));
+    }
+    let qualified=format!("{}.{}",quote_ident(&schema),quote_ident(&table));
+    let transaction=client.transaction().await.map_err(|e|postgres_error(&e))?;
+    for change in &req.changes {
+        if change.original.len()!=columns.len() || change.values.len()!=columns.len() {
+            return Err(api_error(StatusCode::BAD_REQUEST,"Row columns mismatch"));
+        }
+        let mut args:Vec<Option<String>>=Vec::new();
+        let mut predicates=Vec::new();
+        let mut assignments=Vec::new();
+        for (i,col) in columns.iter().enumerate() {
+            let name:String=col.get(0);
+            args.push(change.original[i].clone());
+            predicates.push(format!("{}::text IS NOT DISTINCT FROM ${}",quote_ident(&name),args.len()));
+        }
+        for (i,col) in columns.iter().enumerate() {
+            if change.values[i]==change.original[i] {continue}
+            if col.get::<_,bool>(2)||col.get::<_,bool>(3) {
+                return Err(api_error(StatusCode::BAD_REQUEST,"Primary key and generated columns cannot be edited"));
+            }
+            let name:String=col.get(0);
+            let datatype:String=col.get(1);
+            args.push(change.values[i].clone());
+            assignments.push(format!("{}=CAST(${}::text AS {})",quote_ident(&name),args.len(),datatype));
+        }
+        if assignments.is_empty() {
+            return Err(api_error(StatusCode::BAD_REQUEST,"No changed editable fields"));
+        }
+        let sql=format!("UPDATE {qualified} SET {} WHERE {} RETURNING 1",
+            assignments.join(", "),predicates.join(" AND "));
+        let refs:Vec<&(dyn tokio_postgres::types::ToSql+Sync)>=args.iter()
+            .map(|v|v as &(dyn tokio_postgres::types::ToSql+Sync)).collect();
+        let rows=transaction.query(&sql,&refs).await.map_err(|e|postgres_error(&e))?;
+        if rows.len()!=1 {
+            return Err(api_error(StatusCode::CONFLICT,"Changeset conflict; no rows committed"));
+        }
+    }
+    transaction.commit().await.map_err(|e|postgres_error(&e))?;
+    Ok(Json(ChangeResult{affected:req.changes.len() as u64}))
+}
+
+#[derive(Deserialize)]
+struct InsertField {
+    column: String,
+    // null means SQL NULL, while omitting a column uses its database DEFAULT.
+    value: Option<String>,
+}
+#[derive(Deserialize)]
+struct InsertRow { schema: String, table: String, fields: Vec<InsertField> }
+
+async fn insert_row(State(state): State<AppState>, Json(req): Json<InsertRow>) -> ApiResult<ChangeResult> {
+    let client=connect(&state).await?;
+    let relation=client.query_opt(
+        "SELECT c.oid,n.nspname,c.relname FROM pg_catalog.pg_class c
+         JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+         WHERE n.nspname=$1 AND c.relname=$2 AND c.relkind IN ('r','p')
+           AND has_schema_privilege(n.oid,'USAGE')
+           AND has_table_privilege(c.oid,'INSERT')",
+        &[&req.schema,&req.table],
+    ).await.map_err(|e| postgres_error(&e))?
+     .ok_or_else(|| api_error(StatusCode::FORBIDDEN,"Table is not insertable or access denied"))?;
+    let oid:u32=relation.get(0);
+    let schema:String=relation.get(1);
+    let table:String=relation.get(2);
+    let metadata=client.query(
+        "SELECT a.attname,pg_catalog.format_type(a.atttypid,a.atttypmod),
+                a.attgenerated <> '' OR a.attidentity <> ''
+         FROM pg_catalog.pg_attribute a
+         WHERE a.attrelid=$1 AND a.attnum>0 AND NOT a.attisdropped
+         ORDER BY a.attnum",&[&oid],
+    ).await.map_err(|e| postgres_error(&e))?;
+    if req.fields.len()>metadata.len() {
+        return Err(api_error(StatusCode::BAD_REQUEST,"Too many insert fields"));
+    }
+    let mut names=Vec::new();
+    let mut expressions=Vec::new();
+    let mut values:Vec<Option<String>>=Vec::new();
+    for field in &req.fields {
+        let column=metadata.iter().find(|r|r.get::<_,String>(0)==field.column)
+            .ok_or_else(||api_error(StatusCode::BAD_REQUEST,"Unknown insert column"))?;
+        if column.get::<_,bool>(2) || names.iter().any(|n:&String|n==&field.column) {
+            return Err(api_error(StatusCode::BAD_REQUEST,"Duplicate or generated insert column"));
+        }
+        names.push(field.column.clone());
+        values.push(field.value.clone());
+        let datatype:String=column.get(1);
+        expressions.push(format!("CAST(${}::text AS {})",values.len(),datatype));
+    }
+    let qualified=format!("{}.{}",quote_ident(&schema),quote_ident(&table));
+    let sql=if names.is_empty() {
+        format!("INSERT INTO {qualified} DEFAULT VALUES")
+    } else {
+        format!("INSERT INTO {qualified} ({}) VALUES ({})",
+            names.iter().map(|n|quote_ident(n)).collect::<Vec<_>>().join(", "),
+            expressions.join(", "))
+    };
+    let refs:Vec<&(dyn tokio_postgres::types::ToSql+Sync)>=values.iter()
+        .map(|v|v as &(dyn tokio_postgres::types::ToSql+Sync)).collect();
+    let affected=client.execute(&sql,&refs).await.map_err(|e| postgres_error(&e))?;
+    if affected!=1 {
+        return Err(api_error(StatusCode::CONFLICT,"Insert did not affect exactly one row"));
+    }
+    Ok(Json(ChangeResult{affected}))
+}
+
 async fn index() -> impl IntoResponse {
     ([(header::CACHE_CONTROL, "no-store")], Html(include_str!("../web/index.html")))
 }
@@ -377,6 +533,8 @@ async fn main() {
         .route("/api/query", post(execute))
         .route("/api/table-rows", get(table_rows))
         .route("/api/row-change", post(change_row))
+        .route("/api/changeset", post(apply_changeset))
+        .route("/api/row-insert", post(insert_row))
         .with_state(state);
     let host = env::var("HOST").unwrap_or_else(|_| "127.0.0.1".into());
     let address = format!("{host}:{port}");
@@ -398,6 +556,199 @@ mod tests {
         })
     }
 
+
+
+
+
+    #[tokio::test]
+    async fn postgres_restricted_role_enforces_crud_privileges() {
+        let Some(state) = test_state(200, 10_000) else { return; };
+        let client = connect(&state).await.expect("connect");
+        // No login role or credentials are created; SET ROLE limits this one connection.
+        client.batch_execute(
+            "CREATE TABLE public.datawizz_permissions_test (
+                id integer PRIMARY KEY, note text NOT NULL
+             );
+             INSERT INTO public.datawizz_permissions_test VALUES (1, 'before');
+             CREATE ROLE datawizz_permissions_reader NOLOGIN;
+             GRANT USAGE ON SCHEMA public TO datawizz_permissions_reader;
+             GRANT SELECT ON public.datawizz_permissions_test TO datawizz_permissions_reader;
+             SET ROLE datawizz_permissions_reader"
+        ).await.expect("setup restricted role");
+        let read = client.query(
+            "SELECT note FROM public.datawizz_permissions_test WHERE id=1", &[]
+        ).await.expect("SELECT should be allowed");
+        assert_eq!(read[0].get::<_,String>(0), "before");
+        let forbidden_statements = [
+            "INSERT INTO public.datawizz_permissions_test VALUES (2, 'new')",
+            "UPDATE public.datawizz_permissions_test SET note='changed' WHERE id=1",
+            "DELETE FROM public.datawizz_permissions_test WHERE id=1",
+        ];
+        for statement in forbidden_statements {
+            let error = client.batch_execute(statement).await
+                .expect_err("write must be denied to the read-only role");
+            assert_eq!(error.code().map(|code|code.code()),Some("42501"));
+        }
+        client.batch_execute(
+            "RESET ROLE;
+             REVOKE ALL ON public.datawizz_permissions_test FROM datawizz_permissions_reader;
+             REVOKE USAGE ON SCHEMA public FROM datawizz_permissions_reader;
+             DROP ROLE datawizz_permissions_reader;
+             DROP TABLE public.datawizz_permissions_test"
+        ).await.expect("cleanup");
+    }
+
+    #[tokio::test]
+    async fn crud_handles_composite_keys_and_quoted_identifiers() {
+        let Some(state)=test_state(200,10_000) else {return;};
+        let client=connect(&state).await.expect("connect");
+        client.batch_execute(
+            "CREATE TABLE public.\"Datawizz \"\"Pairs\"\"\" (
+                \"Left Key\" integer NOT NULL,
+                \"Right Key\" integer NOT NULL,
+                \"Payload \"\"Text\"\"\" text,
+                PRIMARY KEY (\"Left Key\", \"Right Key\")
+            );
+            INSERT INTO public.\"Datawizz \"\"Pairs\"\"\" VALUES (1,1,'first'),(1,2,'second')"
+        ).await.expect("setup quoted table");
+        let table="Datawizz \"Pairs\"".to_string();
+        let Json(page)=table_rows(State(state.clone()),Query(PageRequest{
+            schema:"public".into(),table:table.clone(),offset:Some(0),limit:Some(10)
+        })).await.expect("browse quoted table");
+        assert_eq!(page.rows.len(),2);
+        assert!(page.stable_order);
+        assert_eq!(page.rows[1][2].as_deref(),Some("second"));
+        let old=vec![Some("1".into()),Some("2".into()),Some("second".into())];
+        let new=vec![Some("1".into()),Some("2".into()),Some("updated".into())];
+        change_row(State(state.clone()),Json(RowChange{
+            schema:"public".into(),table:table.clone(),
+            original:old.clone(),values:Some(new.clone()),delete:false
+        })).await.expect("update composite key row");
+        let Err((status,_))=change_row(State(state.clone()),Json(RowChange{
+            schema:"public".into(),table:table.clone(),
+            original:old,values:Some(new.clone()),delete:false
+        })).await else {panic!("stale update must be rejected")};
+        assert_eq!(status,StatusCode::CONFLICT);
+        let Json(inserted)=insert_row(State(state.clone()),Json(InsertRow{
+            schema:"public".into(),table:table.clone(),fields:vec![
+                InsertField{column:"Left Key".into(),value:Some("2".into())},
+                InsertField{column:"Right Key".into(),value:Some("1".into())},
+                InsertField{column:"Payload \"Text\"".into(),value:None},
+            ]
+        })).await.expect("insert quoted columns");
+        assert_eq!(inserted.affected,1);
+        change_row(State(state),Json(RowChange{
+            schema:"public".into(),table:table.clone(),
+            original:new,values:None,delete:true
+        })).await.expect("delete one composite key row");
+        let count:i64=client.query_one(
+            "SELECT count(*) FROM public.\"Datawizz \"\"Pairs\"\"\"",&[]
+        ).await.expect("count").get(0);
+        assert_eq!(count,2);
+        client.batch_execute("DROP TABLE public.\"Datawizz \"\"Pairs\"\"\"")
+            .await.expect("cleanup");
+    }
+
+    #[tokio::test]
+    async fn crud_rejects_unauthorized_columns_and_duplicate_insert_fields() {
+        let Some(state)=test_state(200,10_000) else {return;};
+        let client=connect(&state).await.expect("connect");
+        client.batch_execute(
+            "CREATE TABLE public.datawizz_insert_validation (
+              id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+              value text NOT NULL DEFAULT 'default'
+            )"
+        ).await.expect("setup");
+        let duplicate=insert_row(State(state.clone()),Json(InsertRow{
+            schema:"public".into(),table:"datawizz_insert_validation".into(),
+            fields:vec![
+                InsertField{column:"value".into(),value:Some("a".into())},
+                InsertField{column:"value".into(),value:Some("b".into())}
+            ]
+        })).await;
+        assert!(duplicate.is_err(),"duplicate columns must not be accepted");
+        let generated=insert_row(State(state.clone()),Json(InsertRow{
+            schema:"public".into(),table:"datawizz_insert_validation".into(),
+            fields:vec![InsertField{column:"id".into(),value:Some("100".into())}]
+        })).await;
+        assert!(generated.is_err(),"identity column must use DEFAULT");
+        let not_null=insert_row(State(state),Json(InsertRow{
+            schema:"public".into(),table:"datawizz_insert_validation".into(),
+            fields:vec![InsertField{column:"value".into(),value:None}]
+        })).await;
+        assert!(not_null.is_err(),"SQL NULL must not bypass constraints");
+        client.batch_execute("DROP TABLE public.datawizz_insert_validation")
+            .await.expect("cleanup");
+    }
+
+    #[tokio::test]
+    async fn insert_uses_defaults_and_preserves_null() {
+        let Some(state)=test_state(200,10_000) else {return;};
+        let client=connect(&state).await.expect("connect");
+        client.batch_execute(
+            "CREATE TABLE public.datawizz_insert_test (
+              id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+              title text NOT NULL DEFAULT 'default title',
+              note text DEFAULT 'default note'
+             )"
+        ).await.expect("create");
+        let insert=|fields| InsertRow{schema:"public".into(),table:"datawizz_insert_test".into(),fields};
+        insert_row(State(state.clone()),Json(insert(vec![]))).await.expect("defaults");
+        insert_row(State(state.clone()),Json(insert(vec![
+            InsertField{column:"title".into(),value:Some("literal NULL".into())},
+            InsertField{column:"note".into(),value:None},
+        ]))).await.expect("explicit null");
+        let rows=client.query("SELECT id,title,note FROM public.datawizz_insert_test ORDER BY id",&[])
+            .await.expect("read");
+        assert_eq!(rows.len(),2);
+        assert_eq!(rows[0].get::<_,String>(1),"default title");
+        assert_eq!(rows[0].get::<_,Option<String>>(2),Some("default note".into()));
+        assert_eq!(rows[1].get::<_,String>(1),"literal NULL");
+        assert_eq!(rows[1].get::<_,Option<String>>(2),None);
+        assert!(insert_row(State(state.clone()),Json(insert(vec![
+            InsertField{column:"id".into(),value:Some("99".into())}
+        ]))).await.is_err());
+        assert!(insert_row(State(state),Json(insert(vec![
+            InsertField{column:"missing".into(),value:Some("a".into())}
+        ]))).await.is_err());
+        client.batch_execute("DROP TABLE public.datawizz_insert_test").await.expect("cleanup");
+    }
+
+    #[tokio::test]
+    async fn changeset_rolls_back_all_rows_on_stale_conflict() {
+        let Some(state)=test_state(200,10_000) else {return;};
+        let client=connect(&state).await.expect("connect");
+        client.batch_execute(
+            "CREATE TABLE public.datawizz_changeset_test (id integer PRIMARY KEY, label text);
+             INSERT INTO public.datawizz_changeset_test VALUES (1,'first'),(2,'second')"
+        ).await.expect("seed");
+        let change=|id:&str,old:&str,new:&str|ChangesetItem{
+            original:vec![Some(id.into()),Some(old.into())],
+            values:vec![Some(id.into()),Some(new.into())],
+        };
+        let request=|changes|ChangesetRequest{
+            schema:"public".into(),table:"datawizz_changeset_test".into(),changes
+        };
+        let Err((status,_))=apply_changeset(State(state.clone()),Json(request(vec![
+            change("1","first","updated"),change("2","stale","changed")
+        ]))).await else {panic!("stale row must abort changeset")};
+        assert_eq!(status,StatusCode::CONFLICT);
+        let rows=client.query(
+            "SELECT label FROM public.datawizz_changeset_test ORDER BY id",&[]
+        ).await.expect("read after rollback");
+        assert_eq!(rows[0].get::<_,String>(0),"first");
+        assert_eq!(rows[1].get::<_,String>(0),"second");
+        let Json(result)=apply_changeset(State(state),Json(request(vec![
+            change("1","first","updated"),change("2","second","changed")
+        ]))).await.expect("commit both rows");
+        assert_eq!(result.affected,2);
+        let rows=client.query(
+            "SELECT label FROM public.datawizz_changeset_test ORDER BY id",&[]
+        ).await.expect("read after commit");
+        assert_eq!(rows[0].get::<_,String>(0),"updated");
+        assert_eq!(rows[1].get::<_,String>(0),"changed");
+        client.batch_execute("DROP TABLE public.datawizz_changeset_test").await.expect("cleanup");
+    }
 
     #[tokio::test]
     async fn row_edit_respects_pk_null_and_optimistic_conflicts() {
