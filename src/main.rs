@@ -268,6 +268,93 @@ async fn table_rows(
     Ok(Json(PageResponse { columns, rows, offset, limit, has_next, stable_order }))
 }
 
+
+#[derive(Deserialize)]
+struct RowChange {
+    schema: String,
+    table: String,
+    original: Vec<Option<String>>,
+    values: Option<Vec<Option<String>>>,
+    delete: bool,
+}
+
+#[derive(Serialize)]
+struct ChangeResult { affected: u64 }
+
+async fn change_row(State(state): State<AppState>, Json(req): Json<RowChange>) -> ApiResult<ChangeResult> {
+    let mut client = connect(&state).await?;
+    // Only base/partitioned tables, never views, foreign tables or relations without a PK.
+    let relation = client.query_opt(
+        "SELECT c.oid, n.nspname, c.relname FROM pg_catalog.pg_class c
+         JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+         WHERE n.nspname=$1 AND c.relname=$2 AND c.relkind IN ('r','p')
+           AND has_schema_privilege(n.oid,'USAGE')
+           AND has_table_privilege(c.oid,'SELECT')
+           AND has_table_privilege(c.oid,CASE WHEN $3 THEN 'DELETE' ELSE 'UPDATE' END)",
+        &[&req.schema, &req.table, &req.delete],
+    ).await.map_err(|e| postgres_error(&e))?
+      .ok_or_else(|| api_error(StatusCode::FORBIDDEN, "Table is not editable or access denied"))?;
+    let oid: u32 = relation.get(0);
+    let schema: String = relation.get(1);
+    let table: String = relation.get(2);
+    let columns = client.query(
+        "SELECT a.attname, pg_catalog.format_type(a.atttypid,a.atttypmod),
+                EXISTS (SELECT 1 FROM pg_catalog.pg_index i
+                        WHERE i.indrelid=$1 AND i.indisprimary
+                        AND a.attnum = ANY(i.indkey)),
+                a.attgenerated <> '' OR a.attidentity <> ''
+         FROM pg_catalog.pg_attribute a
+         WHERE a.attrelid=$1 AND a.attnum>0 AND NOT a.attisdropped
+         ORDER BY a.attnum",
+        &[&oid],
+    ).await.map_err(|e| postgres_error(&e))?;
+    if columns.is_empty() || !columns.iter().any(|c| c.get::<_, bool>(2)) {
+        return Err(api_error(StatusCode::BAD_REQUEST, "Primary key required"));
+    }
+    if req.original.len()!=columns.len() || (!req.delete && req.values.as_ref().map(Vec::len)!=Some(columns.len())) {
+        return Err(api_error(StatusCode::BAD_REQUEST, "Row columns mismatch"));
+    }
+    let mut args: Vec<Option<String>> = Vec::new();
+    let mut where_parts = Vec::new();
+    for (i,c) in columns.iter().enumerate() {
+        // Compare the full originally loaded row to reject concurrent modifications.
+        let name: String = c.get(0);
+        args.push(req.original[i].clone());
+        where_parts.push(format!("{}::text IS NOT DISTINCT FROM ${}",quote_ident(&name),args.len()));
+    }
+    let qualified=format!("{}.{}",quote_ident(&schema),quote_ident(&table));
+    let sql = if req.delete {
+        format!("DELETE FROM {qualified} WHERE {} RETURNING 1",where_parts.join(" AND "))
+    } else {
+        let mut assignments=Vec::new();
+        let values=req.values.as_ref().expect("checked above");
+        for (i,c) in columns.iter().enumerate() {
+            if values[i]==req.original[i] {continue;}
+            if c.get::<_,bool>(2) || c.get::<_,bool>(3) {
+                return Err(api_error(StatusCode::BAD_REQUEST,"Primary key and generated columns cannot be edited"));
+            }
+            let name: String=c.get(0);
+            let datatype: String=c.get(1);
+            args.push(values[i].clone());
+            assignments.push(format!("{} = CAST(${}::text AS {})",quote_ident(&name),args.len(),datatype));
+        }
+        if assignments.is_empty() {
+            return Err(api_error(StatusCode::BAD_REQUEST,"No changed editable fields"));
+        }
+        format!("UPDATE {qualified} SET {} WHERE {} RETURNING 1",assignments.join(", "),where_parts.join(" AND "))
+    };
+    // Execute atomically; RETURNING verifies one row before committing.
+    let transaction=client.transaction().await.map_err(|e| postgres_error(&e))?;
+    let refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
+        args.iter().map(|v| v as &(dyn tokio_postgres::types::ToSql + Sync)).collect();
+    let rows=transaction.query(&sql,&refs).await.map_err(|e| postgres_error(&e))?;
+    if rows.len()!=1 {
+        return Err(api_error(StatusCode::CONFLICT,"Row changed or no longer exists; refresh and retry"));
+    }
+    transaction.commit().await.map_err(|e| postgres_error(&e))?;
+    Ok(Json(ChangeResult{affected:1}))
+}
+
 async fn index() -> impl IntoResponse {
     ([(header::CACHE_CONTROL, "no-store")], Html(include_str!("../web/index.html")))
 }
@@ -289,6 +376,7 @@ async fn main() {
         .route("/api/columns", get(columns))
         .route("/api/query", post(execute))
         .route("/api/table-rows", get(table_rows))
+        .route("/api/row-change", post(change_row))
         .with_state(state);
     let host = env::var("HOST").unwrap_or_else(|_| "127.0.0.1".into());
     let address = format!("{host}:{port}");
@@ -308,6 +396,44 @@ mod tests {
             max_rows,
             timeout_ms,
         })
+    }
+
+
+    #[tokio::test]
+    async fn row_edit_respects_pk_null_and_optimistic_conflicts() {
+        let Some(state)=test_state(200, 10_000) else {return;};
+        let client=connect(&state).await.expect("connect");
+        client.batch_execute(
+            "CREATE TABLE public.datawizz_row_edit_test (
+              id integer PRIMARY KEY, label text, detail text);
+             INSERT INTO public.datawizz_row_edit_test VALUES (1, 'before', NULL)"
+        ).await.expect("seed");
+        let make=|original:Vec<Option<String>>,values:Option<Vec<Option<String>>>,delete| RowChange{
+            schema:"public".into(),table:"datawizz_row_edit_test".into(),
+            original,values,delete
+        };
+        let original=vec![Some("1".into()),Some("before".into()),None];
+        let updated=vec![Some("1".into()),Some("after".into()),Some("NULL".into())];
+        let Json(success)=change_row(State(state.clone()),Json(make(original.clone(),Some(updated.clone()),false)))
+            .await.expect("update");
+        assert_eq!(success.affected,1);
+        let row=client.query_one(
+          "SELECT label,detail FROM public.datawizz_row_edit_test WHERE id=1",&[]
+        ).await.expect("read");
+        assert_eq!(row.get::<_,String>(0),"after");
+        assert_eq!(row.get::<_,Option<String>>(1),Some("NULL".into()));
+        let Err((code,_))=change_row(State(state.clone()),
+            Json(make(original,Some(updated.clone()),false))).await else{panic!("stale update must fail")};
+        assert_eq!(code,StatusCode::CONFLICT);
+        let Err((code,_))=change_row(State(state.clone()),
+            Json(make(updated.clone(),Some(vec![Some("2".into()),Some("after".into()),Some("NULL".into())]),false)))
+            .await else{panic!("changing PK must fail")};
+        assert_eq!(code,StatusCode::BAD_REQUEST);
+        let Json(deleted)=change_row(State(state),Json(make(updated,None,true)))
+            .await.expect("delete");
+        assert_eq!(deleted.affected,1);
+        client.batch_execute("DROP TABLE public.datawizz_row_edit_test")
+            .await.expect("cleanup");
     }
 
     #[tokio::test]
