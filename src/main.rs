@@ -500,6 +500,7 @@ mod tests {
         client.batch_execute(
             "RESET ROLE;
              REVOKE ALL ON public.datawizz_permissions_test FROM datawizz_permissions_reader;
+             REVOKE USAGE ON SCHEMA public FROM datawizz_permissions_reader;
              DROP ROLE datawizz_permissions_reader;
              DROP TABLE public.datawizz_permissions_test"
         ).await.expect("cleanup");
