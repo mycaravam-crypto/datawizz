@@ -25,6 +25,15 @@ const server = http.createServer(async (req, res) => {
     assert.equal(payload.original.length,2);
     assert.equal(payload.values.length,2);
     res.end(JSON.stringify({affected:1}));
+  } else if (req.url === "/api/changeset") {
+    let body=""; for await(const chunk of req) body+=chunk;
+    const payload=JSON.parse(body);
+    assert.equal(payload.schema,"public");
+    assert.equal(payload.table,"demo");
+    assert.equal(payload.changes.length,1);
+    assert.deepEqual(payload.changes[0].original,["1","original"]);
+    assert.deepEqual(payload.changes[0].values,["1","batch-value"]);
+    res.end(JSON.stringify({affected:1}));
   } else if (req.url === "/api/row-insert") {
     let body=""; for await(const chunk of req) body+=chunk;
     const payload=JSON.parse(body);
