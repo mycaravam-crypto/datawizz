@@ -12,6 +12,8 @@ const { chromium } = require("playwright");
     await page.getByRole("heading",{name:"SQL Workbench"}).waitFor();
     await page.locator("#filter").fill("datawizz_browser_e2e");
     await page.getByRole("button",{name:"Preview public.datawizz_browser_e2e"}).click();
+    // Column metadata loads asynchronously; row editing is enabled only after it arrives.
+    await page.locator("#columns .column-item").first().waitFor();
     await page.locator("#browse").click();
     await page.locator("#output").getByText("before",{exact:true}).waitFor();
     const navigationCount = navigation.length;
