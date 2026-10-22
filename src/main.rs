@@ -398,6 +398,44 @@ mod tests {
         })
     }
 
+
+    #[tokio::test]
+    async fn row_edit_respects_pk_null_and_optimistic_conflicts() {
+        let Some(state)=test_state(200, 10_000) else {return;};
+        let client=connect(&state).await.expect("connect");
+        client.batch_execute(
+            "CREATE TABLE public.datawizz_row_edit_test (
+              id integer PRIMARY KEY, label text, detail text);
+             INSERT INTO public.datawizz_row_edit_test VALUES (1, 'before', NULL)"
+        ).await.expect("seed");
+        let make=|original:Vec<Option<String>>,values:Option<Vec<Option<String>>>,delete| RowChange{
+            schema:"public".into(),table:"datawizz_row_edit_test".into(),
+            original,values,delete
+        };
+        let original=vec![Some("1".into()),Some("before".into()),None];
+        let updated=vec![Some("1".into()),Some("after".into()),Some("NULL".into())];
+        let Json(success)=change_row(State(state.clone()),Json(make(original.clone(),Some(updated.clone()),false)))
+            .await.expect("update");
+        assert_eq!(success.affected,1);
+        let row=client.query_one(
+          "SELECT label,detail FROM public.datawizz_row_edit_test WHERE id=1",&[]
+        ).await.expect("read");
+        assert_eq!(row.get::<_,String>(0),"after");
+        assert_eq!(row.get::<_,Option<String>>(1),Some("NULL".into()));
+        let Err((code,_))=change_row(State(state.clone()),
+            Json(make(original,Some(updated.clone()),false))).await else{panic!("stale update must fail")};
+        assert_eq!(code,StatusCode::CONFLICT);
+        let Err((code,_))=change_row(State(state.clone()),
+            Json(make(updated.clone(),Some(vec![Some("2".into()),Some("after".into()),Some("NULL".into())]),false)))
+            .await else{panic!("changing PK must fail")};
+        assert_eq!(code,StatusCode::BAD_REQUEST);
+        let Json(deleted)=change_row(State(state),Json(make(updated,None,true)))
+            .await.expect("delete");
+        assert_eq!(deleted.affected,1);
+        client.batch_execute("DROP TABLE public.datawizz_row_edit_test")
+            .await.expect("cleanup");
+    }
+
     #[tokio::test]
     async fn table_pagination_reads_multiple_pages() {
         let Some(state) = test_state(200, 10_000) else { return; };
