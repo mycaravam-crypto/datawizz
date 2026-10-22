@@ -29,6 +29,17 @@ fn api_error(status: StatusCode, message: impl Into<String>) -> (StatusCode, Jso
 
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
 
+fn postgres_error(error: &tokio_postgres::Error) -> (StatusCode, Json<ApiError>) {
+    // Return a bounded PostgreSQL SQLSTATE, never server-supplied messages,
+    // SQL fragments, object names or connection details.
+    let code = error
+        .code()
+        .map(|code| code.code())
+        .filter(|code| code.len() == 5 && code.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit()))
+        .unwrap_or("UNKNOWN");
+    api_error(StatusCode::BAD_REQUEST, format!("PostgreSQL query failed (SQLSTATE: {code})"))
+}
+
 async fn connect(state: &AppState) -> Result<tokio_postgres::Client, (StatusCode, Json<ApiError>)> {
     // The initial MVP uses one short-lived DB connection per HTTP request.
     // No cross-user session state or connection-pool complexity.
@@ -73,7 +84,7 @@ async fn schema(State(state): State<AppState>) -> ApiResult<Vec<DbObject>> {
             &[],
         )
         .await
-        .map_err(|e| api_error(StatusCode::BAD_REQUEST, e.to_string()))?;
+        .map_err(|e| postgres_error(&e))?;
     Ok(Json(rows.iter().map(|r| DbObject {
         schema: r.get(0),
         name: r.get(1),
@@ -107,7 +118,7 @@ async fn columns(
             &[&req.schema, &req.object],
         )
         .await
-        .map_err(|e| api_error(StatusCode::BAD_REQUEST, e.to_string()))?;
+        .map_err(|e| postgres_error(&e))?;
     Ok(Json(rows.iter().map(|r| ColumnInfo {
         name: r.get(0),
         data_type: r.get(1),
@@ -135,16 +146,16 @@ async fn execute(State(state): State<AppState>, Json(req): Json<QueryRequest>) -
     // PostgreSQL's extended-query parser rejects multiple statements.
     // This also avoids incorrectly splitting SQL on semicolons inside strings.
     client.prepare(&req.sql).await
-        .map_err(|e| api_error(StatusCode::BAD_REQUEST, e.to_string()))?;
+        .map_err(|e| postgres_error(&e))?;
     let started = Instant::now();
     let stream = client.simple_query_raw(&req.sql).await
-        .map_err(|e| api_error(StatusCode::BAD_REQUEST, e.to_string()))?;
+        .map_err(|e| postgres_error(&e))?;
     tokio::pin!(stream);
     let mut result = QueryResponse {
         columns: vec![], rows: vec![], affected: 0, truncated: false, duration_ms: 0,
     };
     while let Some(message) = stream.try_next().await
-        .map_err(|e| api_error(StatusCode::BAD_REQUEST, e.to_string()))? {
+        .map_err(|e| postgres_error(&e))? {
         match message {
             SimpleQueryMessage::RowDescription(columns) => {
                 result.columns = columns.iter().map(|c| c.name().to_owned()).collect();
