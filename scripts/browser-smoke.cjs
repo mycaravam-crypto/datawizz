@@ -25,6 +25,13 @@ const server = http.createServer(async (req, res) => {
     assert.deepEqual(payload.original,["1","original"]);
     assert.deepEqual(payload.values,["1","updated"]);
     res.end(JSON.stringify({affected:1}));
+  } else if (req.url === "/api/row-insert") {
+    let body=""; for await(const chunk of req) body+=chunk;
+    const payload=JSON.parse(body);
+    assert.equal(payload.schema,"public");
+    assert.equal(payload.table,"demo");
+    assert.deepEqual(payload.fields,[{column:"label",value:null}]);
+    res.end(JSON.stringify({affected:1}));
   } else if (req.url === "/api/query") {
     let body=""; for await(const chunk of req) body += chunk;
     const statement=JSON.parse(body).sql;
@@ -61,6 +68,14 @@ const server = http.createServer(async (req, res) => {
     assert.equal(await page.locator("html").getAttribute("data-theme"),"light");
     await page.locator("#filter").fill("demo");
     await page.getByRole("button",{name:"Preview public.demo"}).click();
+    await page.locator("#insert").click();
+    await page.locator("#insert-dialog").waitFor({state:"visible"});
+    await page.locator('#insert-fields input[data-default-field="0"]').isChecked();
+    await page.locator('#insert-fields input[data-default-field="1"]').uncheck();
+    await page.locator('#insert-fields input[data-null-field="1"]').check();
+    await page.locator("#insert-form").getByRole("button",{name:"Insert"}).click();
+    await page.locator("#insert-dialog").waitFor({state:"hidden"});
+    await page.getByText(/Row inserted/).waitFor();
     await page.getByRole("button",{name:"Browse table rows"}).click();
     await page.locator("#server-page-info").getByText(/Database rows 1/).waitFor();
     await page.locator("#output").getByRole("button",{name:"Edit"}).click();
