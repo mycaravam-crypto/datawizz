@@ -138,6 +138,7 @@ struct QueryRequest { sql: String }
 #[derive(Serialize)]
 struct QueryResponse {
     columns: Vec<String>,
+    column_types: Vec<String>,
     rows: Vec<Vec<Option<String>>>,
     affected: u64,
     truncated: bool,
@@ -151,25 +152,21 @@ async fn execute(State(state): State<AppState>, Json(req): Json<QueryRequest>) -
     let client = connect(&state).await?;
     // PostgreSQL's extended-query parser rejects multiple statements.
     // This also avoids incorrectly splitting SQL on semicolons inside strings.
-    client.prepare(&req.sql).await
+    let statement = client.prepare(&req.sql).await
         .map_err(|e| postgres_error(&e))?;
     let started = Instant::now();
     let stream = client.simple_query_raw(&req.sql).await
         .map_err(|e| postgres_error(&e))?;
     tokio::pin!(stream);
     let mut result = QueryResponse {
-        columns: vec![], rows: vec![], affected: 0, truncated: false, duration_ms: 0,
+        columns: statement.columns().iter().map(|c| c.name().to_owned()).collect(),
+        column_types: statement.columns().iter().map(|c| c.type_().name().to_owned()).collect(),
+        rows: vec![], affected: 0, truncated: false, duration_ms: 0,
     };
     while let Some(message) = stream.try_next().await
         .map_err(|e| postgres_error(&e))? {
         match message {
-            SimpleQueryMessage::RowDescription(columns) => {
-                result.columns = columns.iter().map(|c| c.name().to_owned()).collect();
-            }
             SimpleQueryMessage::Row(row) => {
-                if result.columns.is_empty() {
-                    result.columns = row.columns().iter().map(|c| c.name().to_owned()).collect();
-                }
                 if result.rows.len() < state.max_rows {
                     result.rows.push((0..row.len()).map(|i| row.get(i).map(str::to_owned)).collect());
                 } else {
@@ -250,6 +247,24 @@ mod tests {
         assert_eq!(rows[0].get::<_, String>(0), "id");
         assert!(rows[0].get::<_, bool>(1));
         assert!(!rows[1].get::<_, bool>(1));
+    }
+
+    #[tokio::test]
+    async fn query_reports_column_types_and_empty_results() {
+        let Some(state) = test_state(200, 10_000) else { return; };
+        let Json(result) = execute(State(state.clone()), Json(QueryRequest {
+            sql: "SELECT 42::int4 AS id, true AS enabled, '{}'::jsonb AS payload WHERE false".into()
+        })).await.expect("valid SELECT");
+        assert_eq!(result.columns, vec!["id", "enabled", "payload"]);
+        assert_eq!(result.column_types, vec!["int4", "bool", "jsonb"]);
+        assert!(result.rows.is_empty());
+        assert!(!result.truncated);
+
+        let Json(changed) = execute(State(state), Json(QueryRequest {
+            sql: "CREATE TEMP TABLE datawizz_command_check (id integer)".into()
+        })).await.expect("valid DDL");
+        assert!(changed.columns.is_empty());
+        assert!(changed.column_types.is_empty());
     }
 
     #[tokio::test]

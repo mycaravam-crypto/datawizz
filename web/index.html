@@ -45,9 +45,13 @@ async function load(){try{knownObjects=await api('/api/schema');renderObjects()}
 $('filter').addEventListener('input',renderObjects);
 async function run(){const button=$('run');button.disabled=true;message.className='muted';text(message,'Running…');output.replaceChildren();last=null;$('csv').disabled=true;
 try{const data=await api('/api/query',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sql:sql.value})});last=data;
-text(message,data.rows.length+' rows'+(data.truncated?' (truncated)':'')+' · '+data.duration_ms+' ms · affected: '+data.affected);
+const summary=data.columns.length
+ ? (data.rows.length+' row'+(data.rows.length===1?'':'s')+(data.truncated?' (more rows available; result capped)':''))
+ : ('Command completed · '+data.affected+' affected');
+text(message,summary+' · '+data.duration_ms+' ms');
+if(data.columns.length && data.rows.length===0){const empty=document.createElement('p');empty.className='muted';text(empty,'Query completed: no rows returned.');output.append(empty)}
 if(data.columns.length){const table=document.createElement('table'),head=document.createElement('tr');
-for(const col of data.columns){const th=document.createElement('th');text(th,col);head.append(th)}const thead=document.createElement('thead');thead.append(head);table.append(thead);
+for(const [i,col] of data.columns.entries()){const th=document.createElement('th');const type=(data.column_types||[])[i]||'unknown';text(th,col+' · '+type);th.title='PostgreSQL type: '+type;head.append(th)}const thead=document.createElement('thead');thead.append(head);table.append(thead);
 const body=document.createElement('tbody');for(const row of data.rows){const tr=document.createElement('tr');for(const value of row){const td=document.createElement('td');text(td,value===null?'NULL':value);if(value===null)td.className='null';tr.append(td)}body.append(tr)}table.append(body);output.append(table)}
 $('csv').disabled=!data.columns.length;
 }catch(e){error(e)}finally{button.disabled=false}}
