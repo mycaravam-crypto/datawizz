@@ -33,7 +33,20 @@ docker compose down
 
 The workbench HTML is embedded in the Rust executable at compile time (`include_str!`).
 Refreshing the browser alone does not load a changed `web/index.html` from disk.
-After editing the UI, rebuild and **recreate** the application container:
+For automatic rebuilding while developing (Docker Compose 2.22+), start:
+
+```sh
+docker compose up --build --watch
+```
+
+Compose Watch observes `web/`, `src/`, `Cargo.toml`, and `Dockerfile`.
+Every relevant edit triggers an image rebuild and replacement of the app container.
+The PostgreSQL container is not forcibly recreated. Because Rust embeds HTML,
+`action: rebuild` is required; a file sync or container restart is insufficient.
+
+For a one-time build and container refresh, use `docker compose up -d --build`.
+For an explicit **byte-for-byte verification** that the browser endpoint serves
+the current source (including detection of a wrong port/container), run:
 
 ```sh
 bash scripts/refresh-ui.sh
