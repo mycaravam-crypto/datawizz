@@ -13,6 +13,8 @@ for (const id of ids) {
   assert.match(html, new RegExp('id="' + id + '"'), "Missing UI control: " + id);
 }
 assert.match(html, /\/api\/connections/, "Connection chooser must load server-provided profiles");
+assert.match(html, /id="row-actions"[^>]*>[\\s\\S]*id="browse"[\\s\\S]*id="insert"/, "Browse and Insert must be in the table toolbar");
+assert.doesNotMatch(html.match(/<div class="sidebar-bottom">[\\s\\S]*?<\\/div>/)?.[0] || "", /id="browse"|id="insert"/, "Sidebar must not contain table actions");
 assert.match(html, /aria-label=/, "UI should have accessible labels");
 assert.match(html, /:focus-visible/, "Missing keyboard focus styles");
 assert.match(html, /textContent/, "Dynamic SQL/database strings must render as text");
