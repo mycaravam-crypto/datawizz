@@ -58,6 +58,14 @@ actual HTML served at `http://127.0.0.1:3000/` byte-for-byte with local
 an old UI. The script requires Docker Compose, curl, cmp, and Bash.
 To verify another address, set `DATAWIZZ_URL`.
 
+To **check the already running application without rebuilding**, run:
+
+```sh
+bash scripts/refresh-ui.sh --verify-only
+```
+
+This detects an old running container immediately after a UI edit and does not modify containers. A mismatch causes a nonzero exit status.
+
 The HTTP response already uses `Cache-Control: no-store`. If the UI still appears
 old, check the URL/port and whether another Compose project or local process
 is serving it. There is no runtime HTML bind mount in the release image.
