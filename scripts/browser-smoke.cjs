@@ -114,6 +114,8 @@ const server = http.createServer(async (req, res) => {
     await page.locator("#row-edit").waitFor();
     await page.locator("#browse").click();
     await page.locator("#output .grid tbody tr").first().waitFor();
+    // A previously rendered grid can be visible while the new browse request is still busy.
+    await page.waitForFunction(() => !busy);
     const headers=await page.locator("#output .grid thead th").allTextContents();
     assert.deepEqual(headers.map(v=>v.trim().replace(/\\s+/g," ")),["","#","id ↕","label ↕"],"Editable grid headers match row cell order");
     const firstRow=page.locator("#output .grid tbody tr").first();
