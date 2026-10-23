@@ -15,6 +15,8 @@ const { chromium } = require("playwright");
     // Column metadata loads asynchronously; row editing is enabled only after it arrives.
     await page.locator("#columns .column-item").first().waitFor();
     await page.locator("#browse").click();
+    await page.waitForFunction(() => !busy);
+    await page.locator("#edit-mode").click();
     await page.locator("#output").getByText("before",{exact:true}).waitFor();
     const navigationCount = navigation.length;
 
@@ -32,6 +34,8 @@ const { chromium } = require("playwright");
 
     // The persisted value also survives a fresh table fetch.
     await page.locator("#browse").click();
+    await page.waitForFunction(() => !busy);
+    await page.locator("#edit-mode").click();
     await page.locator("#output").getByText("after-inline",{exact:true}).waitFor();
     // The existing grid can remain visible while the fresh request runs.
     // Wait for the application to finish browsing before attempting row editing.
