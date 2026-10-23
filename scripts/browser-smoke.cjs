@@ -119,10 +119,31 @@ const server = http.createServer(async (req, res) => {
     const firstRow=page.locator("#output .grid tbody tr").first();
     assert.equal(await firstRow.locator("td").count(),headers.length,"Grid body and header have equal column count");
     assert.equal(await firstRow.locator("td").nth(1).innerText(),"1","Row index aligns with # header");
-    await page.locator("#output .editable-cell").first().dblclick();
+    const cell=page.locator("#output .editable-cell").first();
+    await cell.focus();
+    await cell.press("F2");
+    await page.locator("#output .cell-editor").fill("first-draft");
+    await page.locator("#output .cell-editor").press("Enter");
+    await page.locator("#changes-count").getByText("1 pending row").waitFor();
+    await page.locator("#changes-undo").click();
+    await page.locator("#changes-bar").waitFor({state:"hidden"});
+    await page.locator("#changes-redo").click();
+    await page.locator("#changes-count").getByText("1 pending row").waitFor();
+    await page.locator("#changes-undo").click();
+    await page.locator("#changes-bar").waitFor({state:"hidden"});
+    await cell.focus();
+    await cell.press("Enter");
     await page.locator("#output .cell-editor").fill("inline-value");
     await page.locator("#output .cell-editor").press("Enter");
     await page.locator("#changes-count").getByText("1 pending row").waitFor();
+    assert.equal(await page.locator("#changes-undo").isDisabled(),false);
+    // A focused editable cell must support directional keyboard navigation.
+    await page.locator("#output .editable-cell").first().focus();
+    await page.locator("#output .editable-cell").first().press("ArrowDown");
+    assert.equal(await page.locator("#output .editable-cell:focus").count(),1);
+    // Other editing scenarios follow.
+    //
+
     await page.locator("#output input[aria-label^='Select row']").first().check();
     await page.locator("#bulk-toggle").click();
     await page.locator("#selection-bar").waitFor({state:"visible"});
