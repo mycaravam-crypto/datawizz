@@ -114,6 +114,8 @@ const server = http.createServer(async (req, res) => {
     await page.locator("#row-edit").waitFor();
     await page.locator("#browse").click();
     await page.locator("#output .grid tbody tr").first().waitFor();
+    // A previously rendered grid can be visible while the new browse request is still busy.
+    await page.waitForFunction(() => !busy);
     const headers=await page.locator("#output .grid thead th").allTextContents();
     assert.deepEqual(headers.map(v=>v.trim().replace(/\\s+/g," ")),["","#","id ↕","label ↕"],"Editable grid headers match row cell order");
     const firstRow=page.locator("#output .grid tbody tr").first();
@@ -123,6 +125,11 @@ const server = http.createServer(async (req, res) => {
     await cell.focus();
     await cell.press("F2");
     await page.locator("#output .cell-editor").fill("first-draft");
+    await page.locator("#output .cell-editor").press("Tab");
+    assert.equal(await page.locator("#output .editable-cell:focus").count(),1,"Tab returns keyboard focus to the grid");
+    assert.match(await page.locator("#grid-keyboard-hint").innerText(),/Tab next/);
+    await page.locator("#output .editable-cell").first().focus();
+    await page.locator("#output .editable-cell").first().press("F2");
     await page.locator("#output .cell-editor").press("Enter");
     await page.locator("#changes-count").getByText("1 pending row").waitFor();
     await page.locator("#changes-undo").click();
