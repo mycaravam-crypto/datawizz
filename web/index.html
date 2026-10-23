@@ -39,7 +39,7 @@
 </style>
 </head>
 <body>
-<header class="topbar"><div class="brand"><span class="logo" aria-hidden="true">⌘</span><span>datawizz</span><span class="tag">PostgreSQL workbench</span></div><div class="top-actions"><span class="tag">Local · single user</span><button class="btn small" id="theme" type="button" aria-label="Toggle light and dark theme">☀ / ☾</button></div></header>
+<header class="topbar"><div class="brand"><span class="logo" aria-hidden="true">⌘</span><span>datawizz</span><span class="tag">PostgreSQL workbench</span></div><div class="top-actions"><label for="connection-chooser" class="eyebrow">Connection</label><select id="connection-chooser" class="input" aria-label="Database connection" style="width:auto;max-width:230px" disabled><option>Loading…</option></select><span class="tag">Local · single user</span><button class="btn small" id="theme" type="button" aria-label="Toggle light and dark theme">☀ / ☾</button></div></header>
 <div class="app">
 <aside class="sidebar" aria-label="Database navigation">
 <div class="aside-heading"><span class="eyebrow">Explorer</span><button class="btn small" id="refresh" type="button">↻ Refresh</button></div>
@@ -173,6 +173,30 @@ function status(label,type=""){const e=$("status");e.className="status "+type;te
 function info(msg){text(message,msg)}
 function quoted(value){return '"'+value.replaceAll('"','""')+'"'}
 async function api(path,options){const r=await fetch(path,options);const data=await r.json();if(!r.ok){const err=Error(data.error||"Request failed");err.status=r.status;throw err;}return data}
+async function loadConnections(){
+ const chooser=$("connection-chooser");
+ try{
+  const profiles=await api("/api/connections");
+  if(!Array.isArray(profiles)||!profiles.length)throw Error("No configured database connections");
+  chooser.replaceChildren();
+  for(const profile of profiles){
+   const option=document.createElement("option");
+   option.value=profile.id;
+   option.textContent=profile.label;
+   chooser.append(option);
+  }
+  chooser.value="default";
+  // Multiple-profile switching is intentionally disabled until the backend
+  // supports per-request connection routing. Do not imply a working switch.
+  chooser.disabled=true;
+  chooser.title="Additional connection profiles will be supported in a subsequent increment";
+ }catch(e){
+  chooser.replaceChildren(new Option("Connection unavailable",""));
+  chooser.disabled=true;
+  info("Unable to load connections: "+e.message);
+ }
+}
+loadConnections();
 function setTheme(theme){document.documentElement.dataset.theme=theme;$("theme").setAttribute("aria-label","Switch to "+(theme==="dark"?"light":"dark")+" theme");text($("theme"),theme==="dark"?"☀ Light":"☾ Dark")}
 setTheme("dark");
 $("theme").onclick=()=>setTheme(document.documentElement.dataset.theme==="dark"?"light":"dark");

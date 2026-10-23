@@ -62,6 +62,18 @@ async fn connect(state: &AppState) -> Result<tokio_postgres::Client, (StatusCode
 }
 
 #[derive(Serialize)]
+struct ConnectionOption { id: String, label: String, engine: String }
+
+// The first increment exposes only the configured default connection, never its DSN.
+async fn connections() -> Json<Vec<ConnectionOption>> {
+    Json(vec![ConnectionOption {
+        id: "default".into(),
+        label: "Default PostgreSQL".into(),
+        engine: "postgresql".into(),
+    }])
+}
+
+#[derive(Serialize)]
 struct DbObject {
     schema: String,
     name: String,
@@ -528,6 +540,7 @@ async fn main() {
     connect(&state).await.expect("Cannot connect to PostgreSQL");
     let app = Router::new()
         .route("/", get(index))
+        .route("/api/connections", get(connections))
         .route("/api/schema", get(schema))
         .route("/api/columns", get(columns))
         .route("/api/query", post(execute))
@@ -546,6 +559,16 @@ async fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn connection_options_do_not_expose_credentials() {
+        let Json(profiles) = connections().await;
+        assert_eq!(profiles.len(), 1);
+        assert_eq!(profiles[0].id, "default");
+        let body = serde_json::to_string(&profiles).expect("serialize options");
+        assert!(!body.contains("postgres://"));
+        assert!(!body.contains("password"));
+    }
 
     fn test_state(max_rows: usize, timeout_ms: u64) -> Option<AppState> {
         let url = std::env::var("DATABASE_URL")
