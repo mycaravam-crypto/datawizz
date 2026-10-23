@@ -124,6 +124,8 @@ const server = http.createServer(async (req, res) => {
     await page.locator("#output .cell-editor").press("Enter");
     await page.locator("#changes-count").getByText("1 pending row").waitFor();
     await page.locator("#output input[aria-label^='Select row']").first().check();
+    await page.locator("#bulk-toggle").click();
+    await page.locator("#selection-bar").waitFor({state:"visible"});
     await page.locator("#bulk-column").selectOption("1");
     await page.locator("#bulk-value").fill("batch-value");
     page.once("dialog",dialog=>dialog.accept());
