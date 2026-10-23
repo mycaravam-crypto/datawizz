@@ -146,6 +146,15 @@ const server = http.createServer(async (req, res) => {
     await page.getByRole("button",{name:"Save changes"}).click();
     await page.locator("#row-dialog").waitFor({state:"hidden"});
     await page.getByText(/Row updated; changes visible immediately/).waitFor();
+    await page.route("**/api/row-change",async route=>route.fulfill({status:409,contentType:"application/json",body:JSON.stringify({error:"Row changed or no longer exists"})}));
+    await page.locator("#output").getByRole("button",{name:"Edit"}).first().click();
+    await page.locator('#row-fields input[data-column="1"]').fill("unsaved-draft");
+    await page.getByRole("button",{name:"Save changes"}).click();
+    await page.getByText(/Your edits are still in the editor/).waitFor();
+    assert.equal(await page.locator("#row-dialog").isVisible(),true,"409 retains editor");
+    assert.equal(await page.locator('#row-fields input[data-column="1"]').inputValue(),"unsaved-draft");
+    await page.locator("#row-cancel").click();
+    await page.unroute("**/api/row-change");
     await page.locator("#server-next").click();
     await page.locator("#server-page-info").getByText(/Database rows 101/).waitFor();
     await page.evaluate(()=>fetch("/api/test-conflict"));
