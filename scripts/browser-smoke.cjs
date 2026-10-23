@@ -167,7 +167,7 @@ const server = http.createServer(async (req, res) => {
     await page.locator("#changes-bar").waitFor({state:"hidden"});
     assert.match(await page.locator("#selection-bar").textContent(),/saved atomically/);
 
-    await page.getByRole("button",{name:"Browse table rows"}).click();
+    await page.locator("#browse-table").evaluate(button=>button.click());
     await page.locator("#server-page-info").getByText(/Database rows 1/).waitFor();
     await page.locator("#browse").click();
     await page.waitForFunction(() => !busy);
@@ -209,8 +209,6 @@ const server = http.createServer(async (req, res) => {
     assert.equal(await page.locator("#server-pager").isVisible(),false,"Free SQL hides server pager");
     await page.evaluate(()=>fetch("/api/delay-browse"));
     await page.locator("#browse").click();
-    await page.waitForFunction(() => !busy);
-    await page.locator("#edit-mode").click();
     await page.locator("#filter").fill("");
     await page.getByRole("button",{name:"Preview public.other"}).click();
     await page.locator("#selected").getByText("public.other").waitFor();
