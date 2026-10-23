@@ -19,6 +19,16 @@ services:
     build:
       context: .
     image: datawizz:local
+    develop:
+      watch:
+        - action: rebuild
+          path: ./web
+        - action: rebuild
+          path: ./src
+        - action: rebuild
+          path: ./Cargo.toml
+        - action: rebuild
+          path: ./Dockerfile
     depends_on:
       postgres:
         condition: service_healthy
