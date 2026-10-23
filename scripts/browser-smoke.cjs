@@ -113,6 +113,8 @@ const server = http.createServer(async (req, res) => {
     await page.getByText(/Row inserted; table updated automatically/).waitFor();
     await page.locator("#row-edit").waitFor();
     await page.locator("#browse").click();
+    await page.waitForFunction(() => !busy);
+    await page.locator("#edit-mode").click();
     await page.locator("#output .grid tbody tr").first().waitFor();
     // A previously rendered grid can be visible while the new browse request is still busy.
     await page.waitForFunction(() => !busy);
@@ -168,6 +170,8 @@ const server = http.createServer(async (req, res) => {
     await page.getByRole("button",{name:"Browse table rows"}).click();
     await page.locator("#server-page-info").getByText(/Database rows 1/).waitFor();
     await page.locator("#browse").click();
+    await page.waitForFunction(() => !busy);
+    await page.locator("#edit-mode").click();
     await page.locator("#output input[aria-label^='Select row']").first().check();
     await page.locator("#row-edit").click();
     await page.locator("#row-dialog").waitFor({state:"visible"});
@@ -189,6 +193,8 @@ const server = http.createServer(async (req, res) => {
     await page.locator("#server-page-info").getByText(/Database rows 101/).waitFor();
     await page.evaluate(()=>fetch("/api/test-conflict"));
     await page.locator("#browse").click();
+    await page.waitForFunction(() => !busy);
+    await page.locator("#edit-mode").click();
     await page.locator("#output .editable-cell").first().dblclick();
     await page.locator("#output .cell-editor").fill("retry-value");
     await page.locator("#output .cell-editor").press("Enter");
@@ -203,6 +209,8 @@ const server = http.createServer(async (req, res) => {
     assert.equal(await page.locator("#server-pager").isVisible(),false,"Free SQL hides server pager");
     await page.evaluate(()=>fetch("/api/delay-browse"));
     await page.locator("#browse").click();
+    await page.waitForFunction(() => !busy);
+    await page.locator("#edit-mode").click();
     await page.locator("#filter").fill("");
     await page.getByRole("button",{name:"Preview public.other"}).click();
     await page.locator("#selected").getByText("public.other").waitFor();
