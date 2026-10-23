@@ -29,13 +29,21 @@ const { chromium } = require("playwright");
     await page.locator("#changes-review").waitFor({state:"visible"});
     await page.locator("#changes-review-confirm").click();
     await page.locator("#changes-bar").waitFor({state:"hidden"});
+    // Saving hides the staged-changes bar before the follow-up browse completes.
+    // Avoid clicking Refresh while the application is still busy.
+    await page.waitForFunction(() => !busy);
     await page.locator("#output").getByText("after-inline",{exact:true}).waitFor();
     assert.equal(navigation.length,navigationCount,"Inline edit must not reload the page");
 
     // The persisted value also survives a fresh table fetch.
     await page.locator("#browse").click();
     await page.waitForFunction(() => !busy);
-    await page.locator("#edit-mode").click();
+    // Explicit refresh must return to read-only; opt in before selecting rows.
+    await page.locator("#edit-mode").waitFor({state:"visible"});
+    if (await page.locator("#edit-mode").getAttribute("aria-pressed") !== "true") {
+      await page.locator("#edit-mode").click();
+    }
+    await page.locator("#output input[aria-label^='Select row']").first().waitFor();
     await page.locator("#output").getByText("after-inline",{exact:true}).waitFor();
     // The existing grid can remain visible while the fresh request runs.
     // Wait for the application to finish browsing before attempting row editing.
