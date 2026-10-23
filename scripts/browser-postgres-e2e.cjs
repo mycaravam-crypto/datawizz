@@ -33,9 +33,13 @@ const { chromium } = require("playwright");
     // The persisted value also survives a fresh table fetch.
     await page.locator("#browse").click();
     await page.locator("#output").getByText("after-inline",{exact:true}).waitFor();
+    // The existing grid can remain visible while the fresh request runs.
+    // Wait for the application to finish browsing before attempting row editing.
+    await page.waitForFunction(() => !busy);
 
     // Editing through the row dialog must update the current grid automatically.
     await page.locator("#output").getByRole("button",{name:"Edit"}).first().click();
+    await page.locator("#row-dialog").waitFor({state:"visible"});
     await page.locator('#row-fields input[data-column="1"]').fill("after-dialog");
     await page.getByRole("button",{name:"Save changes"}).click();
     await page.locator("#output").getByText("after-dialog",{exact:true}).waitFor();
