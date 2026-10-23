@@ -137,7 +137,7 @@ const server = http.createServer(async (req, res) => {
     await page.locator("#changes-review").getByText("batch-value").waitFor();
     await page.locator("#changes-review-confirm").click();
     await page.locator("#changes-bar").waitFor({state:"hidden"});
-    assert.match(await page.locator("#selection-bar").innerText(),/saved atomically/);
+    assert.match(await page.locator("#selection-bar").textContent(),/saved atomically/);
 
     await page.getByRole("button",{name:"Browse table rows"}).click();
     await page.locator("#server-page-info").getByText(/Database rows 1/).waitFor();
