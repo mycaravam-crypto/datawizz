@@ -61,3 +61,54 @@ jobs:
         run: cargo clippy -- -D warnings
       - name: PostgreSQL integration tests
         run: cargo test -- --test-threads=1
+
+  browser-postgres-e2e:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: datawizz_test
+          POSTGRES_PASSWORD: test_only_password
+          POSTGRES_DB: datawizz_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U datawizz_test -d datawizz_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://datawizz_test:test_only_password@127.0.0.1:5432/datawizz_test
+      PGPASSWORD: test_only_password
+      PORT: '3188'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install PostgreSQL client and Chromium
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+          npm install --no-save --package-lock=false playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Seed PostgreSQL test table
+        run: |
+          psql -h 127.0.0.1 -U datawizz_test -d datawizz_test -v ON_ERROR_STOP=1 -c "CREATE TABLE public.datawizz_browser_e2e (id integer PRIMARY KEY, label text); INSERT INTO public.datawizz_browser_e2e VALUES (1,'before');"
+      - name: Start Rust application
+        run: |
+          cargo run > /tmp/datawizz-e2e.log 2>&1 &
+          echo $! > /tmp/datawizz-e2e.pid
+          for attempt in $(seq 1 180); do
+            if curl -fsS http://127.0.0.1:3188/ > /dev/null; then exit 0; fi
+            sleep 2
+          done
+          cat /tmp/datawizz-e2e.log
+          exit 1
+      - name: Chromium real database editing E2E
+        run: node scripts/browser-postgres-e2e.cjs
+      - name: Log application diagnostics on failure
+        if: failure()
+        run: cat /tmp/datawizz-e2e.log || true
