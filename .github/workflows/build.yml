@@ -31,8 +31,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Build release container
-        run: docker build -t datawizz:ci .
+      - name: Build Compose application and verify served UI
+        run: bash scripts/refresh-ui.sh
+      - name: Compose diagnostics on failure
+        if: failure()
+        run: |
+          docker compose ps
+          docker compose logs --tail=100 app
+      - name: Remove Compose containers
+        if: always()
+        run: docker compose down --remove-orphans
 
   postgres-tests:
     runs-on: ubuntu-latest
