@@ -38,7 +38,8 @@ const { chromium } = require("playwright");
     await page.waitForFunction(() => !busy);
 
     // Editing through the row dialog must update the current grid automatically.
-    await page.locator("#output").getByRole("button",{name:"Edit"}).first().click();
+    await page.locator("#output input[aria-label^='Select row']").first().check();
+    await page.locator("#row-edit").click();
     await page.locator("#row-dialog").waitFor({state:"visible"});
     await page.locator('#row-fields input[data-column="1"]').fill("after-dialog");
     await page.getByRole("button",{name:"Save changes"}).click();
