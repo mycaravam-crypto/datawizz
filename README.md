@@ -29,6 +29,26 @@ Stop and remove the containers:
 docker compose down
 ```
 
+## Always use the current UI during Compose development
+
+The workbench HTML is embedded in the Rust executable at compile time (`include_str!`).
+Refreshing the browser alone does not load a changed `web/index.html` from disk.
+After editing the UI, rebuild and **recreate** the application container:
+
+```sh
+bash scripts/refresh-ui.sh
+```
+
+This runs `docker compose up -d --build --force-recreate app` and compares the
+actual HTML served at `http://127.0.0.1:3000/` byte-for-byte with local
+`web/index.html`. A mismatch exits with an error rather than silently showing
+an old UI. The script requires Docker Compose, curl, cmp, and Bash.
+To verify another address, set `DATAWIZZ_URL`.
+
+The HTTP response already uses `Cache-Control: no-store`. If the UI still appears
+old, check the URL/port and whether another Compose project or local process
+is serving it. There is no runtime HTML bind mount in the release image.
+
 ## Corporate TLS interception during Docker build
 
 Place any required **PEM-encoded** corporate root/intermediate CA certificates in `certs/`, using `.crt` or `.pem` extensions. Multiple files are supported. The certificates are mounted only in a Docker BuildKit build step and included in the builder trust store, **not in the final runtime image**. The directory is ignored by Git except for `certs/.gitkeep`.
