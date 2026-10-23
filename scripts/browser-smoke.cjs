@@ -141,8 +141,6 @@ const server = http.createServer(async (req, res) => {
     await page.locator("#output .editable-cell").first().focus();
     await page.locator("#output .editable-cell").first().press("ArrowDown");
     assert.equal(await page.locator("#output .editable-cell:focus").count(),1);
-    // Other editing scenarios follow.
-    //
 
     await page.locator("#output input[aria-label^='Select row']").first().check();
     await page.locator("#bulk-toggle").click();
