@@ -1337,7 +1337,7 @@ mod tests {
             .expect("bounded CSV");
         let output = std::str::from_utf8(&bytes).unwrap();
         assert!(output.contains("'=2+2"));
-        assert!(output.contains(r#""quoted ""text""""#));
+        assert!(output.contains("quoted \"\"text\"\""));
         assert!(output.contains(",\r\n"), "NULL should be unquoted empty");
         assert!(output.contains(",\"\"\r\n"), "empty string should be quoted");
 
