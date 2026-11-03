@@ -1713,6 +1713,13 @@ async fn sql_editor_script() -> impl IntoResponse {
     )
 }
 
+async fn connection_manager_script() -> impl IntoResponse {
+    ([
+        (header::CONTENT_TYPE, "application/javascript; charset=utf-8"),
+        (header::CACHE_CONTROL, "no-store"),
+    ], include_str!("../web/connection-manager.js"))
+}
+
 fn api_routes(state: AppState) -> Router {
     Router::new()
         .route("/api/connections", get(connections))
@@ -1805,6 +1812,7 @@ async fn main() {
     let mut app = Router::new()
         .route("/", get(index))
         .route("/assets/sql-editor.js", get(sql_editor_script))
+        .route("/assets/connection-manager.js", get(connection_manager_script))
         .merge(api_routes(state.clone()))
         .merge(connection_manager::routes(state.clone()));
     for profile in extras {
