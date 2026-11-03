@@ -1714,10 +1714,16 @@ async fn sql_editor_script() -> impl IntoResponse {
 }
 
 async fn connection_manager_script() -> impl IntoResponse {
-    ([
-        (header::CONTENT_TYPE, "application/javascript; charset=utf-8"),
-        (header::CACHE_CONTROL, "no-store"),
-    ], include_str!("../web/connection-manager.js"))
+    (
+        [
+            (
+                header::CONTENT_TYPE,
+                "application/javascript; charset=utf-8",
+            ),
+            (header::CACHE_CONTROL, "no-store"),
+        ],
+        include_str!("../web/connection-manager.js"),
+    )
 }
 
 fn api_routes(state: AppState) -> Router {
@@ -1791,11 +1797,18 @@ async fn main() {
         read_only: p.read_only,
     }));
     let profiles = Arc::new(visible);
-    let managed = env::var("DATAWIZZ_PROFILE_STORE").ok()
-        .filter(|path| !path.is_empty()).map(|path| {
-            assert!(access_token.is_some(), "Managed connections require DATAWIZZ_ACCESS_TOKEN");
-            Arc::new(connection_manager::ManagedStore::load(&path, &profiles)
-                .expect("Invalid managed connection store"))
+    let managed = env::var("DATAWIZZ_PROFILE_STORE")
+        .ok()
+        .filter(|path| !path.is_empty())
+        .map(|path| {
+            assert!(
+                access_token.is_some(),
+                "Managed connections require DATAWIZZ_ACCESS_TOKEN"
+            );
+            Arc::new(
+                connection_manager::ManagedStore::load(&path, &profiles)
+                    .expect("Invalid managed connection store"),
+            )
         });
     let state = AppState {
         url: Arc::new(url),
@@ -1812,7 +1825,10 @@ async fn main() {
     let mut app = Router::new()
         .route("/", get(index))
         .route("/assets/sql-editor.js", get(sql_editor_script))
-        .route("/assets/connection-manager.js", get(connection_manager_script))
+        .route(
+            "/assets/connection-manager.js",
+            get(connection_manager_script),
+        )
         .merge(api_routes(state.clone()))
         .merge(connection_manager::routes(state.clone()));
     for profile in extras {
@@ -1837,8 +1853,10 @@ async fn main() {
         );
     }
     if managed.is_some() {
-        app = app.route("/profiles/{id}/{*tail}",
-            axum::routing::any(connection_manager::dispatch).with_state(state.clone()));
+        app = app.route(
+            "/profiles/{id}/{*tail}",
+            axum::routing::any(connection_manager::dispatch).with_state(state.clone()),
+        );
     }
     let host = env::var("HOST").unwrap_or_else(|_| "127.0.0.1".into());
     let address = format!("{host}:{port}");
