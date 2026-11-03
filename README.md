@@ -164,11 +164,11 @@ database, and DB permissions/locks may reject them.
 **Security limitation:** This remains a **single-user development application**.
 A bearer token and verified PostgreSQL TLS are available by explicit
 configuration, but the default Docker environment is for trusted local use only.
-Do not expose plain HTTP or database connections to untrusted networks. The SQL editor already supports arbitrary permitted SQL. The SQL
-builder does not bypass or elevate database rights. Direct write-capable admin
-endpoints, server configuration changes and remote operation remain blocked
-pending the security prerequisites in
-[the administration roadmap](https://github.com/mycaravam-crypto/datawizz/issues/59).
+Do not expose plain HTTP or database connections to untrusted networks. The SQL
+editor already supports arbitrary permitted SQL; the builder does not elevate
+database rights. Direct write-capable administration endpoints and secure remote
+operation remain out of scope pending the controls in
+[security issue #63](https://github.com/mycaravam-crypto/datawizz/issues/63).
 
 ## Optional API access token and verified PostgreSQL TLS
 
@@ -187,8 +187,10 @@ anchor at `DATABASE_TLS_CA_FILE`. Hostname verification remains enabled and
 there is no insecure skip-verification mode. `DATABASE_TLS=disable` retains
 the original local development default. Use TLS for external DB hosts.
 
-Connection switching, session isolation, SSH tunneling and user-specific DB
-permissions remain outside this first security increment.
+Server-defined connection profiles, isolated routing and explicit profile switching
+were added in [PR #75](https://github.com/mycaravam-crypto/datawizz/pull/75).
+Runtime-managed profiles, SSH tunneling, user-specific authentication/RBAC and
+remote HTTPS termination remain outside the current implementation.
 
 ## Database Workspace profiles and ER relationships (#72)
 
@@ -329,11 +331,12 @@ schema diff and safe native `pg_dump`/`pg_restore` workflows remain in #65.
 | `DATAWIZZ_ACCESS_TOKEN` | unset | Optional API bearer token (at least 32 characters); protects all `/api/` routes |
 | `DATABASE_TLS` | `disable` | `disable` or `verify-full` (verified PostgreSQL TLS) |
 | `DATABASE_TLS_CA_FILE` | unset | PEM CA certificate for the verified TLS connection |
+| `DATABASE_PROFILES_JSON` | unset | Optional server-side PostgreSQL profiles (up to 7 additional); additional profiles require API token, production profiles must be read-only and use verified TLS |
 
 ## Security and limitations
 
-**Single-user development use only.** HTTP has no authentication; never publish it publicly. The application executes arbitrary SQL with the configured database role's privileges. Use a minimally privileged role and a trusted database.
+**Single-user development use only.** HTTP API bearer-token authentication is optional via `DATAWIZZ_ACCESS_TOKEN`; the default local setup is not authenticated. No HTTPS termination is provided by the application. Never publish it directly to untrusted networks. Remote operation requires separately configured HTTPS/access controls and least-privileged PostgreSQL roles; hardening is tracked in [#63](https://github.com/mycaravam-crypto/datawizz/issues/63).
 
-PostgreSQL TLS with certificate and hostname verification is opt-in via `DATABASE_TLS=verify-full`. The default `disable` is for local development only. Do not use plaintext database or HTTP connections across untrusted networks. The row limit caps response memory, not the work performed inside PostgreSQL: extra rows are consumed and discarded until completion or timeout. The application opens a DB connection per request. It does not implement multiple connection profiles, multi-statement scripts, autocomplete, query history, secure remote administration, backup/restore or write-capable administration dialogs. The catalog is read-only and SQL templates are manual-review-only.
+PostgreSQL TLS with verified certificate chain and hostname is opt-in through `DATABASE_TLS=verify-full`. The default `disable` is intended only for trusted local development. The row limit caps response memory, not the work performed inside PostgreSQL: extra rows may be consumed until completion or timeout. The application opens a DB connection per request. Server-defined profiles, explicit switching, read-only profile modes and a bounded ER overview are supported. Query history is session-only; explicit saved scripts use unencrypted browser storage. Basic SQL suggestions are available, but rich syntax highlighting is not. Multi-statement scripts, secure remote administration, native backup/restore, full schema diff and direct privileged administration dialogs remain unsupported; see [#59](https://github.com/mycaravam-crypto/datawizz/issues/59), [#65](https://github.com/mycaravam-crypto/datawizz/issues/65) and [#70](https://github.com/mycaravam-crypto/datawizz/issues/70).
 
-The CI Docker build passed on the initial MVP. The new Compose PostgreSQL smoke test still requires local verification. Follow issues #1-#6.
+CI covers frontend checks, browser smoke, Docker/Compose UI verification, PostgreSQL integration and live browser/PostgreSQL E2E. Remaining format-gate, lifecycle and accessibility checks are tracked in [#6](https://github.com/mycaravam-crypto/datawizz/issues/6).
