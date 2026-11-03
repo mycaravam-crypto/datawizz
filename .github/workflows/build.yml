@@ -8,8 +8,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build offline CodeMirror editor
+        run: |
+          npm install --no-audit --no-fund
+          npm run build:editor
       - name: Validate embedded JavaScript and key UI elements
-        run: node scripts/check-ui.cjs
+        run: |
+          node scripts/check-ui.cjs
+          node --check web/vendor/sql-editor.js
 
   browser-tests:
     # Playwright 1.56 does not support Ubuntu 26.04 (ubuntu-latest on GitHub Actions).
@@ -25,6 +34,8 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Check browser test JavaScript syntax
         run: node --check scripts/browser-smoke.cjs
+      - name: Build offline CodeMirror editor
+        run: npm run build:editor
       - name: Chromium workbench smoke tests
         run: node scripts/browser-smoke.cjs
 
@@ -68,6 +79,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build offline editor assets
+        run: |
+          npm install --no-audit --no-fund
+          npm run build:editor
       - name: Clippy
         run: cargo clippy -- -D warnings
       - name: PostgreSQL integration tests
@@ -113,6 +131,8 @@ jobs:
           psql -h 127.0.0.1 -U datawizz_test -d datawizz_test -v ON_ERROR_STOP=1 -c "CREATE DATABASE datawizz_profile_test"
           psql -h 127.0.0.1 -U datawizz_test -d datawizz_profile_test -v ON_ERROR_STOP=1 -c "CREATE TABLE public.profile_only (id integer PRIMARY KEY, label text); INSERT INTO public.profile_only VALUES (1,'sandbox-only');"
           psql -h 127.0.0.1 -U datawizz_test -d datawizz_test -v ON_ERROR_STOP=1 -c "CREATE TABLE public.datawizz_browser_e2e (id integer PRIMARY KEY, label text); INSERT INTO public.datawizz_browser_e2e VALUES (1,'before'); CREATE TABLE public.datawizz_er_child (id integer PRIMARY KEY, parent_id integer REFERENCES public.datawizz_browser_e2e(id));"
+      - name: Build offline CodeMirror editor
+        run: npm run build:editor
       - name: Start Rust application
         run: |
           cargo run > /tmp/datawizz-e2e.log 2>&1 &

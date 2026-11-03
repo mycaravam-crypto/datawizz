@@ -129,6 +129,12 @@
 .er-accessible{padding:12px 16px;max-height:270px;overflow:auto;border-top:1px solid var(--border)}
 .er-accessible table{width:100%;font-size:12px}
 .er-accessible th,.er-accessible td{text-align:left;padding:8px;border-bottom:1px solid var(--border);overflow-wrap:anywhere}
+.sql-rich{border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-top:6px}
+.sql-rich[hidden],.editor[hidden]{display:none}
+.sql-rich .cm-editor{outline:none}
+.sql-rich .cm-editor.cm-focused{outline:2px solid var(--accent);outline-offset:-2px}
+.sql-draft-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:10px 0}
+.sql-draft-consent{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px}
 .admin-sql-preview{margin:0;padding:12px 14px;border:1px solid var(--border);border-radius:9px;background:var(--bg);color:var(--text);white-space:pre-wrap;overflow-wrap:anywhere;min-height:52px;font:12px/1.65 ui-monospace,SFMono-Regular,Consolas,monospace}
 </style>
 </head>
@@ -150,8 +156,9 @@
 <div id="sql-workspace" class="workspace-pane" role="tabpanel" aria-labelledby="workspace-tab-sql">
 <section class="card" aria-labelledby="editor-heading"><div class="card-header"><h2 id="editor-heading" class="card-title">SQL editor</h2><div class="buttons"><button class="btn small" id="copy" type="button">Copy SQL</button><button class="btn small" id="clear" type="button">Clear</button></div></div>
 <div class="tab-strip" id="tabs" role="tablist" aria-label="SQL editor tabs"></div><div class="editor-wrap"><label class="eyebrow" for="sql">Statement</label><textarea id="sql" class="editor" spellcheck="false" aria-label="SQL statement">SELECT current_database(), version();</textarea>
+<div id="sql-rich" class="sql-rich" aria-label="Rich SQL editor with highlighting" hidden></div>
 <div id="sql-completion" class="sql-completion" role="listbox" aria-label="SQL suggestions" hidden></div>
-<div class="note" style="margin-top:5px">SQL suggestions: <kbd>Ctrl</kbd> + <kbd>Space</kbd> · from visible PostgreSQL objects</div>
+<div class="note" style="margin-top:5px">SQL suggestions: <kbd>Ctrl</kbd> + <kbd>Space</kbd> · from visible PostgreSQL objects · <kbd>Ctrl</kbd> + <kbd>F</kbd> searches in rich editor</div>
 <div class="toolbar"><span class="helper">Execute a single statement · <kbd>Ctrl</kbd> / <kbd>⌘</kbd> + <kbd>Enter</kbd></span><div class="buttons"><button id="explain" class="btn small" type="button" title="Prepare EXPLAIN (FORMAT JSON) without executing SQL">Explain SQL</button><button id="run" class="btn primary" type="button">▶ Run query</button></div></div></div></section>
 <details id="sql-productivity" class="card sql-productivity">
  <summary><span>Query history & saved scripts</span><span class="note" id="sql-history-count">History: 0 · session only</span></summary>
@@ -168,6 +175,12 @@
    <div class="sql-library-controls"><input id="sql-script-name" class="input" maxlength="80" placeholder="Script name…" aria-label="Saved script name"><button id="sql-script-save" class="btn small" type="button">Save locally</button></div>
    <p id="sql-script-status" class="note" role="status" aria-live="polite">Up to 20 scripts · 16 KiB each · no automatic execution.</p>
    <div id="sql-scripts-list" class="sql-library-list" role="list" aria-label="Saved SQL scripts"></div>
+<div class="sql-draft-controls">
+ <label class="sql-draft-consent"><input id="sql-draft-consent" type="checkbox"> Save unsent SQL drafts on this device (unencrypted)</label>
+ <button id="sql-draft-restore" class="btn small" type="button" hidden>Restore saved drafts</button>
+ <button id="sql-draft-clear" class="btn small" type="button">Delete saved drafts</button>
+</div>
+<p id="sql-draft-status" class="note" role="status">Off by default. Never enable this on a shared browser or for secret-bearing SQL.</p>
   </section>
  </div>
 </details>
@@ -261,6 +274,7 @@
 <form id="row-form" method="dialog"><h2>Edit row</h2><p class="note">Only editable non-key fields can be changed. Blank text is not SQL NULL.</p><div id="row-fields"></div><div class="buttons" style="justify-content:flex-end;margin-top:16px"><button class="btn" type="button" id="row-cancel">Cancel</button><button class="btn primary" type="submit">Save changes</button></div></form>
 </dialog>
 <dialog id="insert-dialog" aria-label="Insert table row" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:12px;max-height:85vh;max-width:min(95vw,560px);width:100%;overflow:auto"><form id="insert-form"><h2>Insert row</h2><p class="note">DEFAULT omits a column. SQL NULL is different from empty text.</p><div id="insert-fields"></div><div class="buttons" style="justify-content:flex-end;margin-top:16px"><button class="btn" type="button" id="insert-cancel">Cancel</button><button class="btn primary" type="submit">Insert</button></div></form></dialog>
+<script src="/assets/sql-editor.js"></script>
 <script>
 "use strict";
 const $=id=>document.getElementById(id);
@@ -349,7 +363,16 @@ function renderSavedScripts(){
      text($("sql-script-status"),"Saved script deleted.");renderSavedScripts()}
    catch{text($("sql-script-status"),"Browser storage unavailable. Script not deleted.")}
   };
-  row.append(main,open,remove);list.append(row);
+  const exportBtn=element("button","btn small","Export");exportBtn.type="button";
+  exportBtn.setAttribute("aria-label","Export saved script "+item.name);
+  exportBtn.onclick=()=>{
+   const blob=new Blob([item.sql],{type:"text/plain;charset=utf-8"}),url=URL.createObjectURL(blob);
+   const link=document.createElement("a");link.href=url;
+   link.download=item.name.replace(/[^a-zA-Z0-9._-]/g,"_").slice(0,60)+".sql";
+   document.body.append(link);link.click();link.remove();
+   setTimeout(()=>URL.revokeObjectURL(url),1000);
+  };
+  row.append(main,open,exportBtn,remove);list.append(row);
  }
 }
 savedScripts=loadSavedScripts();
@@ -1307,6 +1330,128 @@ $("explain").onclick=()=>{
  nextTab++;tabs.push(tab);activeTab=tab.id;sql.value=tab.sql;renderTabs();sql.focus();
  info("EXPLAIN was prepared in a new tab. Nothing has executed; EXPLAIN without ANALYZE does not run the query.");
 };
+
+
+// The CodeMirror bundle is self-contained; the original textarea remains a
+// fallback for Rust-only builds and ?basic-editor=1 accessibility mode.
+let sqlRich=null;
+function richSuggestions(prefix){
+ const options=[
+  ...sqlWords.map(word=>({label:word,insert:word,kind:"keyword"})),
+  ...objects.map(obj=>({label:obj.schema+"."+obj.name,
+    insert:quoted(obj.schema)+"."+quoted(obj.name),kind:obj.kind})),
+  ...selectedColumns.map(col=>({label:col.name,insert:quoted(col.name),kind:"column"}))
+ ];
+ const seen=new Set();
+ return options.filter(item=>{
+  const id=item.kind+":"+item.label;
+  if(seen.has(id)||!item.label.toLocaleLowerCase().includes(prefix.toLocaleLowerCase()))return false;
+  seen.add(id);return true;
+ }).slice(0,40);
+}
+const draftKey="datawizz.sql-draft.v1."+activeProfileId;
+const draftConsentKey="datawizz.sql-draft-opt-in.v1."+activeProfileId;
+let draftOptIn=false,draftsReady=false,draftTimer=null;
+try{draftOptIn=localStorage.getItem(draftConsentKey)==="yes"}catch{}
+$("sql-draft-consent").checked=draftOptIn;
+function readDrafts(){
+ try{
+  const data=JSON.parse(localStorage.getItem(draftKey)||"null");
+  if(data?.version!==1||!Array.isArray(data.tabs)||!data.tabs.length||data.tabs.length>12)return null;
+  if(!data.tabs.every(tab=>Number.isSafeInteger(tab.id)&&tab.id>0&&
+   typeof tab.name==="string"&&tab.name.length>0&&tab.name.length<=55&&
+   typeof tab.sql==="string"&&tab.sql.length<=16000))return null;
+  if(new TextEncoder().encode(JSON.stringify(data)).length>40000)return null;
+  return data.tabs.some(tab=>tab.id===data.activeId)?data:null;
+ }catch{return null}
+}
+function refreshDraftControls(){$("sql-draft-restore").hidden=!readDrafts()}
+function persistDraftsNow(){
+ if(!draftOptIn||!draftsReady)return;
+ persistTab();
+ const payload=JSON.stringify({version:1,activeId:activeTab,tabs:tabs.map(t=>({
+  id:t.id,name:t.name,sql:t.sql
+ }))});
+ if(tabs.length>12||tabs.some(t=>new TextEncoder().encode(t.sql).length>16000)||
+   new TextEncoder().encode(payload).length>40000){
+  text($("sql-draft-status"),"Draft limit: 12 tabs, 16 KiB each, 40 KiB total. Not saved.");return;
+ }
+ try{localStorage.setItem(draftKey,payload);refreshDraftControls();
+  text($("sql-draft-status"),"Draft saved locally, unencrypted (explicit opt-in).")}
+ catch{text($("sql-draft-status"),"Browser storage unavailable; draft not saved.")}
+}
+function scheduleDraftPersistence(){
+ if(!draftOptIn||!draftsReady)return;
+ clearTimeout(draftTimer);draftTimer=setTimeout(persistDraftsNow,400);
+}
+$("sql-draft-consent").onchange=()=>{
+ if($("sql-draft-consent").checked){
+  if(!confirm("Store unsent SQL unencrypted in this browser? Do not enable for credentials or on shared devices.")){
+   $("sql-draft-consent").checked=false;return;
+  }
+  try{localStorage.setItem(draftConsentKey,"yes");draftOptIn=true;persistDraftsNow()}
+  catch{$("sql-draft-consent").checked=false;text($("sql-draft-status"),"Storage unavailable.")}
+ }else{
+  clearTimeout(draftTimer);draftOptIn=false;
+  try{localStorage.removeItem(draftConsentKey);localStorage.removeItem(draftKey)}catch{}
+  refreshDraftControls();
+  text($("sql-draft-status"),"Draft recovery disabled and saved draft deleted.");
+ }
+};
+$("sql-draft-restore").onclick=()=>{
+ const draft=readDrafts();
+ if(!draft||busy||!confirm("Replace current tabs with stored drafts? No SQL executes."))return;
+ tabs=draft.tabs.map(t=>({...t}));activeTab=draft.activeId;
+ nextTab=Math.max(...tabs.map(t=>t.id))+1;
+ sql.value=tabs.find(t=>t.id===activeTab).sql;
+ renderTabs();sql.focus();
+ text($("sql-draft-status"),"Drafts restored. Nothing executed.");
+};
+$("sql-draft-clear").onclick=()=>{
+ if(!confirm("Delete stored drafts and disable recovery for this connection?"))return;
+ clearTimeout(draftTimer);draftOptIn=false;$("sql-draft-consent").checked=false;
+ try{localStorage.removeItem(draftConsentKey);localStorage.removeItem(draftKey)}catch{}
+ refreshDraftControls();text($("sql-draft-status"),"Draft recovery disabled; drafts deleted.");
+};
+sql.addEventListener("input",()=>{persistTab();scheduleDraftPersistence()});
+$("tabs").addEventListener("click",scheduleDraftPersistence);
+draftsReady=true;refreshDraftControls();
+function mountRichEditor(){
+ if(!window.DataWizzEditor||new URLSearchParams(location.search).has("basic-editor"))return;
+ const valueProperty=Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,"value");
+ let syncing=false;
+ try{
+  const editor=window.DataWizzEditor.create($("sql-rich"),sql.value,{
+   onExecute:()=>{if(!busy)$("run").click()},
+   suggest:richSuggestions,
+   onChange:value=>{
+    if(syncing)return;
+    valueProperty.set.call(sql,value);
+    persistTab();scheduleDraftPersistence();
+   }
+  });
+  sqlRich=editor;
+  Object.defineProperty(sql,"value",{
+   configurable:true,
+   get(){return editor.getValue()},
+   set(value){
+    const text=String(value);
+    valueProperty.set.call(sql,text);
+    if(text!==editor.getValue()){
+     syncing=true;try{editor.setValue(text)}finally{syncing=false}
+    }
+    scheduleDraftPersistence();
+   }
+  });
+  sql.focus=()=>editor.focus();
+  sql.hidden=true;$("sql-rich").hidden=false;
+  $("sql-completion").hidden=true;
+ }catch(e){
+  sqlRich=null;$("sql-rich").replaceChildren();$("sql-rich").hidden=true;sql.hidden=false;
+  console.warn("Rich editor unavailable. Plain textarea fallback.",e);
+ }
+}
+mountRichEditor();
 
 loadObjects();
 </script>
