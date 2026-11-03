@@ -67,6 +67,32 @@ const server = http.createServer(async (req, res) => {
     }else{
       res.end(JSON.stringify({columns:["id","label"],rows:[[String(offset+1),"original"]],offset,limit:100,has_next:offset===0,stable_order:true}));
     }
+  } else if (req.url.startsWith("/api/table-export?")) {
+    const params=new URL(req.url,"http://localhost").searchParams;
+    assert.equal(params.get("table"),"demo");
+    assert.equal(params.has("offset"),false,"Export must use a single database snapshot");
+    assert.equal(params.has("limit"),false,"The server enforces export quotas");
+    const filter=params.get("filter")||"";
+    if(filter==="many"){
+      res.statusCode=413;
+      res.end(JSON.stringify({error:"CSV export exceeds 10,000 rows; narrow the filter"}));
+    }else{
+      if(filter==="slow"){
+        await new Promise(resolve=>{
+          const timeout=setTimeout(resolve,2000);
+          res.once("close",()=>{clearTimeout(timeout);resolve()});
+        });
+      }
+      if(!res.destroyed){
+        const cells=[["1","Alpha_One"],["2","Beta%Two"],["3","alpha_Three"],["4","=1+1"]];
+        const rows=filter?cells.filter(row=>row[1].toLowerCase().includes(filter.toLowerCase())):cells;
+        const escape=value=>'"'+String(value).replace(/^[\s\uFEFF\u200B]*[=+@-]/u,match=>"'"+match).replaceAll('"','""')+'"';
+        const csv="\uFEFF"+[["id","label"],...rows].map(row=>row.map(escape).join(",")).join("\r\n");
+        res.setHeader("Content-Type","text/csv; charset=utf-8");
+        res.setHeader("Cache-Control","no-store");
+        res.end(csv);
+      }
+    }
   } else if (req.url === "/api/row-change") {
     let body=""; for await(const chunk of req) body+=chunk;
     const payload=JSON.parse(body);
@@ -484,12 +510,19 @@ const server = http.createServer(async (req, res) => {
     const csvBody=fs.readFileSync(await download.path(),"utf8");
     assert(csvBody.includes('"\'=1+1"'),"CSV must neutralize spreadsheet formulas");
     assert(csvBody.includes('"id","label"'));
-    // A 1,001+ row export must fail instead of silently truncating or downloading.
+    // Quota violations must return 413 without a partial CSV file.
     await page.locator("#table-filter-value").fill("many");
     await page.locator("#table-apply").click();
     await page.locator("#output").getByText("many-1",{exact:true}).waitFor();
     await page.locator("#table-export").click();
-    await page.locator("#message").getByText(/exceeds 1,000 rows/).waitFor();
+    await page.locator("#message").getByText(/exceeds 10,000 rows/).waitFor();
+    // Abort is user-controlled; no stale CSV download is reported as success.
+    await page.locator("#table-filter-value").fill("slow");
+    await page.locator("#table-apply").click();
+    await page.waitForFunction(() => !busy);
+    await page.locator("#table-export").click();
+    await page.locator("#table-export-cancel").click();
+    await page.locator("#message").getByText(/Export cancelled; no file downloaded/).waitFor();
     await page.locator("#table-reset").click();
     await page.locator("#output").getByText("original",{exact:true}).waitFor();
     // Read-only ER overview remains text-only for untrusted PostgreSQL names.
