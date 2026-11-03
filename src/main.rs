@@ -1271,6 +1271,111 @@ mod tests {
     use super::*;
 
     #[test]
+    fn csv_export_escapes_formulas_unicode_quotes_and_distinguishes_null() {
+        let mut csv = String::new();
+        assert!(csv_append_record(&mut csv, [
+            Some("normal"), Some(" =1+1"), Some("-2"), Some("@SUM(A1)"),
+            Some("Unicode: ü😀"), Some("quoted \"value\"\r\nnext"),
+            Some(""), None,
+        ].into_iter(), 10_000));
+        assert!(csv.contains("\"' =1+1\""));
+        assert!(csv.contains("\"'-2\""));
+        assert!(csv.contains("\"'@SUM(A1)\""));
+        assert!(csv.contains("\"Unicode: ü😀\""));
+        assert!(csv.contains("\"quoted \"\"value\"\"\r\nnext\""));
+        assert!(csv.ends_with("\"\",\r\n"));
+        assert!(!csv_formula_prefix("plain - text"));
+        assert!(csv_formula_prefix("\u{feff}\u{200b} \t=SUM(A1)"));
+        assert!(csv_formula_prefix("\u{200b}+SUM(A1)"));
+    }
+
+    #[test]
+    fn csv_export_rejects_oversized_rows_without_appending_value() {
+        let mut csv = String::new();
+        assert!(!csv_append_record(&mut csv, [Some("abcdefgh")].into_iter(), 5));
+        assert!(csv.len() <= 5);
+        assert!(!csv_append_record(&mut csv, [Some("x\"x")].into_iter(), 5));
+        assert!(csv.len() <= 5);
+    }
+
+    #[tokio::test]
+    async fn snapshot_export_filters_quotes_enforces_quota_and_preserves_data() {
+        let Some(state) = test_state(200, 10_000) else { return; };
+        let client = connect(&state).await.expect("connect");
+        client.batch_execute(
+            "CREATE TABLE public.datawizz_csv_export_test (
+                id integer PRIMARY KEY, label text, nullable text
+             );
+             INSERT INTO public.datawizz_csv_export_test VALUES
+                 (1, '=2+2', NULL), (2, 'percent%_# ü', ''), (3, 'quoted \"text\"', 'safe');"
+        ).await.expect("export fixture");
+        let export = ExportRequest {
+            schema: "public".into(), table: "datawizz_csv_export_test".into(),
+            filter_column: Some("label".into()), filter: Some("%_#".into()),
+            sort_column: Some("id".into()), sort_dir: Some("desc".into()),
+        };
+        let body = table_export(State(state.clone()), Query(export)).await
+            .expect("snapshot export")
+            .into_response();
+        assert_eq!(body.status(), StatusCode::OK);
+        assert_eq!(body.headers().get(header::CONTENT_TYPE).unwrap(),
+            "text/csv; charset=utf-8");
+        assert_eq!(body.headers().get(header::CACHE_CONTROL).unwrap(), "no-store");
+        let bytes = axum::body::to_bytes(body.into_body(), EXPORT_MAX_BYTES).await
+            .expect("bounded CSV");
+        let output = std::str::from_utf8(&bytes).expect("UTF-8 CSV");
+        assert!(output.starts_with("\u{feff}"));
+        assert!(output.contains("\"percent%_# ü\""));
+        assert!(!output.contains("\"'=2+2\""), "filter must restrict rows");
+
+        let all = table_export(State(state.clone()), Query(ExportRequest {
+            schema: "public".into(), table: "datawizz_csv_export_test".into(),
+            filter_column: None, filter: None, sort_column: Some("id".into()),
+            sort_dir: Some("asc".into()),
+        })).await.expect("export all").into_response();
+        let bytes = axum::body::to_bytes(all.into_body(), EXPORT_MAX_BYTES).await
+            .expect("bounded CSV");
+        let output = std::str::from_utf8(&bytes).unwrap();
+        assert!(output.contains("\"'=2+2\","));
+        assert!(output.contains("\"\"\"quoted \"\"\"\"text\"\"\"\"\""));
+        assert!(output.contains(",\r\n"), "NULL should be unquoted empty");
+        assert!(output.contains(",\"\"\r\n"), "empty string should be quoted");
+
+        let bad = table_export(State(state.clone()), Query(ExportRequest {
+            schema: "public".into(), table: "datawizz_csv_export_test".into(),
+            filter_column: Some("id); DROP TABLE x; --".into()), filter: Some("1".into()),
+            sort_column: None, sort_dir: None,
+        })).await;
+        assert!(matches!(bad, Err((StatusCode::BAD_REQUEST, _))));
+
+        let exists: i64 = client.query_one(
+            "SELECT count(*) FROM public.datawizz_csv_export_test", &[]
+        ).await.expect("no writes").get(0);
+        assert_eq!(exists, 3);
+        client.batch_execute(
+            "DROP TABLE public.datawizz_csv_export_test"
+        ).await.expect("fixture cleanup");
+    }
+
+    #[tokio::test]
+    async fn snapshot_export_rejects_more_than_ten_thousand_rows() {
+        let Some(state) = test_state(200, 10_000) else { return; };
+        let client = connect(&state).await.expect("connect");
+        client.batch_execute(
+            "CREATE TABLE public.datawizz_csv_export_quota (id integer PRIMARY KEY);
+             INSERT INTO public.datawizz_csv_export_quota
+             SELECT generate_series(1, 10001);"
+        ).await.expect("large fixture");
+        let result = table_export(State(state), Query(ExportRequest {
+            schema: "public".into(), table: "datawizz_csv_export_quota".into(),
+            filter_column: None, filter: None, sort_column: None, sort_dir: None,
+        })).await;
+        assert!(matches!(result, Err((StatusCode::PAYLOAD_TOO_LARGE, _))));
+        client.batch_execute("DROP TABLE public.datawizz_csv_export_quota")
+            .await.expect("fixture cleanup");
+    }
+
+    #[test]
     fn access_token_is_opt_in_and_uses_exact_bearer_header() {
         let secret = "0123456789abcdefghijklmnopqrstuvwxyz";
         assert!(authorized(None, None));
