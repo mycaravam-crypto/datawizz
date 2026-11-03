@@ -123,6 +123,7 @@ jobs:
       PORT: '3188'
       DATAWIZZ_ACCESS_TOKEN: 0123456789abcdefghijklmnopqrstuvwxyz
       DATABASE_PROFILES_JSON: '[{"id":"sandbox","label":"Sandbox","url":"postgres://datawizz_test:test_only_password@127.0.0.1:5432/datawizz_profile_test","environment":"test","read_only":true}]'
+      DATAWIZZ_PROFILE_STORE: /tmp/datawizz-manager-ci/profiles.json
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -165,6 +166,8 @@ jobs:
           exit 1
       - name: Chromium real database editing E2E
         run: node scripts/browser-postgres-e2e.cjs
+      - name: Browser Connection Manager CRUD and profile isolation E2E
+        run: node scripts/connection-manager-e2e.cjs
       - name: Restart application using a restricted database login
         run: |
           kill "$(cat /tmp/datawizz-e2e.pid)"
