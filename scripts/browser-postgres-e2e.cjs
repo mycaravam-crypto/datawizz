@@ -161,6 +161,43 @@ const { chromium } = require("playwright");
     assert.equal(await page.evaluate(()=>localStorage.getItem("datawizz.saved-sql.v1")),null,
       "Query history must not be saved to persistent browser storage");
     await page.unroute("**/api/query");
-    console.log("Real PostgreSQL browser editing and EXPLAIN passed");
+    // Server-side search is independent from the currently loaded 100-row page.
+    await page.locator("#filter").fill("datawizz_browser_e2e");
+    await page.getByRole("button",{name:"Preview public.datawizz_browser_e2e"}).click();
+    await page.waitForFunction(() => document.querySelectorAll("#table-filter-column option").length>1);
+    await page.locator("#table-filter-column").selectOption("label");
+    await page.locator("#table-filter-value").fill("after-dialog");
+    await page.locator("#table-sort-column").selectOption("label");
+    await page.locator("#table-sort-dir").selectOption("desc");
+    await page.locator("#table-apply").click();
+    await page.waitForFunction(() => !busy && tableMode);
+    await page.locator("#output").getByText("after-dialog",{exact:true}).waitFor();
+    assert.equal(await page.locator("#output .grid tbody tr").count(),1);
+    const tokenHeaders={Authorization:"Bearer 0123456789abcdefghijklmnopqrstuvwxyz"};
+    const url=(changes)=>"http://127.0.0.1:3188/api/table-rows?"+
+      new URLSearchParams({schema:"public",table:"datawizz_browser_e2e",limit:"20",offset:"0",...changes});
+    const filteredRows=await page.request.get(url({filter_column:"label",filter:"after-dialog",sort_column:"label",sort_dir:"desc"}),{headers:tokenHeaders});
+    assert.equal(filteredRows.status(),200);
+    assert.equal((await filteredRows.json()).rows.length,1);
+    const badColumn=await page.request.get(url({filter_column:"label) OR true--",filter:"after-dialog"}),{headers:tokenHeaders});
+    assert.equal(badColumn.status(),400);
+    const badSort=await page.request.get(url({sort_column:"label",sort_dir:"desc; DROP TABLE x"}),{headers:tokenHeaders});
+    assert.equal(badSort.status(),400);
+    assert.equal(await page.locator("#table-export").isDisabled(),false,
+      "Export disabled: "+await page.locator("#message").textContent());
+    const downloading=page.waitForEvent("download",{timeout:8000}).catch(()=>null);
+    await page.locator("#table-export").click();
+    await page.waitForFunction(() => !busy);
+    const exportMessage=await page.locator("#message").textContent();
+    assert.match(exportMessage,/Exported [0-9]+ database rows/,
+      "Export did not finish: "+exportMessage);
+    const download=await downloading;
+    assert(download,"Export reported success but no browser download was emitted: "+exportMessage);
+    assert.equal(download.suggestedFilename(),"datawizz-filtered-table.csv");
+    const fs=require("node:fs");
+    assert(fs.readFileSync(await download.path(),"utf8").includes("after-dialog"));
+    await page.locator("#table-reset").click();
+    await page.locator("#output").getByText("after-dialog",{exact:true}).waitFor();
+    console.log("Real PostgreSQL browser editing, EXPLAIN and filtering passed");
   } finally {await browser.close()}
 })().catch(e=>{console.error(e);process.exitCode=1});

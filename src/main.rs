@@ -258,6 +258,10 @@ struct PageRequest {
     table: String,
     offset: Option<i64>,
     limit: Option<i64>,
+    filter_column: Option<String>,
+    filter: Option<String>,
+    sort_column: Option<String>,
+    sort_dir: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -307,27 +311,81 @@ async fn table_rows(
          ORDER BY array_position(i.indkey::smallint[],a.attnum::smallint)",
         &[&oid],
     ).await.map_err(|e| postgres_error(&e))?;
-    let stable_order = !keys.is_empty();
-    let order = if stable_order {
-        format!(" ORDER BY {}", keys.iter().map(|row| {
-            let name: String = row.get(0);
-            quote_ident(&name)
-        }).collect::<Vec<_>>().join(", "))
+    // Resolve all user-selected columns against PostgreSQL's catalog before quoting
+    // them; neither filter contents nor sort direction become SQL syntax.
+    let column_rows = client.query(
+        "SELECT attname::text, atttypid::oid FROM pg_catalog.pg_attribute
+         WHERE attrelid = $1 AND attnum > 0 AND NOT attisdropped
+         ORDER BY attnum",
+        &[&oid],
+    ).await.map_err(|e| postgres_error(&e))?;
+    let columns: Vec<String> = column_rows.iter().map(|r| r.get(0)).collect();
+    if columns.is_empty() {
+        return Err(api_error(StatusCode::BAD_REQUEST, "Relation has no visible columns"));
+    }
+    let valid_column = |name: &str| columns.iter().any(|col| col == name);
+    if req.filter_column.as_deref().is_some_and(|name| !valid_column(name))
+        || req.sort_column.as_deref().is_some_and(|name| !valid_column(name))
+    {
+        return Err(api_error(StatusCode::BAD_REQUEST, "Invalid filter or sort column"));
+    }
+    if req.filter.as_deref().is_some_and(|value| value.chars().count() > 200)
+        || (req.filter.as_deref().is_some_and(|value| !value.is_empty())
+            && req.filter_column.is_none())
+    {
+        return Err(api_error(StatusCode::BAD_REQUEST, "Invalid table filter"));
+    }
+    let direction = req.sort_dir.as_deref().unwrap_or("asc");
+    if !matches!(direction, "asc" | "desc") || (req.sort_column.is_none() && req.sort_dir.is_some()) {
+        return Err(api_error(StatusCode::BAD_REQUEST, "Invalid sort direction"));
+    }
+    let filter = req.filter.as_deref().filter(|value| !value.is_empty());
+    let predicate = if let (Some(col), Some(_)) = (&req.filter_column, filter) {
+        format!(" WHERE {}::text ILIKE $1 ESCAPE '#'", quote_ident(col))
     } else { String::new() };
-    let sql = format!(
-        "SELECT * FROM {}.{}{} LIMIT {} OFFSET {}",
-        quote_ident(&schema), quote_ident(&table), order, limit+1, offset
-    );
-    let statement = client.prepare(&sql).await.map_err(|e| postgres_error(&e))?;
-    let columns = statement.columns().iter().map(|c| c.name().to_string()).collect();
-    let stream = client.simple_query_raw(&sql).await.map_err(|e| postgres_error(&e))?;
-    tokio::pin!(stream);
-    let mut rows = Vec::new();
-    while let Some(message) = stream.try_next().await.map_err(|e| postgres_error(&e))? {
-        if let SimpleQueryMessage::Row(row) = message {
-            rows.push((0..row.len()).map(|i| row.get(i).map(str::to_owned)).collect());
+    // '#' avoids PostgreSQL backslash escaping ambiguity. Treat %, _, # literally.
+    let filter_pattern = filter.map(|value| {
+        let escaped = value.replace('#', "##").replace('%', "#%").replace('_', "#_");
+        format!("%{escaped}%")
+    });
+    let stable_order = !keys.is_empty();
+    let mut ordering = Vec::new();
+    if let Some(name) = &req.sort_column {
+        ordering.push(format!("source.{} {} NULLS LAST", quote_ident(name),
+            if direction == "desc" { "DESC" } else { "ASC" }));
+    }
+    // Primary key ties are always broken deterministically, even for custom sort.
+    for row in &keys {
+        let name: String = row.get(0);
+        if req.sort_column.as_ref() != Some(&name) {
+            ordering.push(format!("source.{} ASC NULLS LAST", quote_ident(&name)));
         }
     }
+    let order = if ordering.is_empty() { String::new() }
+        else { format!(" ORDER BY {}", ordering.join(", ")) };
+    // Cast every returned column to text to keep the original string-based
+    // JSON contract and safely use bound filter parameters for every data type.
+    let projection = column_rows.iter().map(|row| {
+        let name: String = row.get(0);
+        let typid: u32 = row.get(1);
+        // boolout preserves the original simple-query 't'/'f' representation.
+        let expr = if typid == 16 {
+            format!("pg_catalog.boolout({})::text", quote_ident(&name))
+        } else { format!("{}::text", quote_ident(&name)) };
+        format!("{expr} AS {}", quote_ident(&name))
+    }).collect::<Vec<_>>().join(", ");
+    let sql = format!(
+        "SELECT {projection} FROM {}.{} AS source{}{} LIMIT {} OFFSET {}",
+        quote_ident(&schema), quote_ident(&table), predicate, order, limit+1, offset
+    );
+    let db_rows = if let Some(pattern) = &filter_pattern {
+        client.query(&sql, &[pattern]).await
+    } else {
+        client.query(&sql, &[]).await
+    }.map_err(|e| postgres_error(&e))?;
+    let mut rows: Vec<Vec<Option<String>>> = db_rows.iter().map(|row| {
+        (0..columns.len()).map(|i| row.get::<usize, Option<String>>(i)).collect()
+    }).collect();
     let has_next = rows.len() > limit as usize;
     rows.truncate(limit as usize);
     Ok(Json(PageResponse { columns, rows, offset, limit, has_next, stable_order }))
@@ -1105,8 +1163,8 @@ mod tests {
         ).await.expect("setup quoted table");
         let table="Datawizz \"Pairs\"".to_string();
         let Json(page)=table_rows(State(state.clone()),Query(PageRequest{
-            schema:"public".into(),table:table.clone(),offset:Some(0),limit:Some(10)
-        })).await.expect("browse quoted table");
+            schema:"public".into(),table:table.clone(),offset:Some(0),limit:Some(10),
+            filter_column:None,filter:None,sort_column:None,sort_dir:None})).await.expect("browse quoted table");
         assert_eq!(page.rows.len(),2);
         assert!(page.stable_order);
         assert_eq!(page.rows[1][2].as_deref(),Some("second"));
@@ -1289,8 +1347,8 @@ mod tests {
         ).await.expect("seed");
         let page = || PageRequest {
             schema:"public".into(),table:"datawizz_live_edit_test".into(),
-            offset:Some(0),limit:Some(20)
-        };
+            offset:Some(0),limit:Some(20),
+            filter_column:None,filter:None,sort_column:None,sort_dir:None };
         let Json(initial)=table_rows(State(state.clone()),Query(page())).await.expect("initial");
         assert_eq!(initial.rows[0][1].as_deref(),Some("before"));
         let original=vec![Some("1".into()),Some("before".into())];
@@ -1335,7 +1393,7 @@ mod tests {
                 id integer PRIMARY KEY, title text, price numeric(10,2), enabled boolean);
              INSERT INTO public.datawizz_typed_edit_test VALUES (1,'Mechanical keyboard',89.00,true)"
         ).await.expect("seed");
-        let req=PageRequest{schema:"public".into(),table:"datawizz_typed_edit_test".into(),offset:Some(0),limit:Some(10)};
+        let req=PageRequest{schema:"public".into(),table:"datawizz_typed_edit_test".into(),offset:Some(0),limit:Some(10),filter_column:None,filter:None,sort_column:None,sort_dir:None};
         let Json(page)=table_rows(State(state.clone()),Query(req)).await.expect("load row");
         assert_eq!(page.rows[0][2].as_deref(),Some("89.00"));
         assert_eq!(page.rows[0][3].as_deref(),Some("t"));
@@ -1375,7 +1433,8 @@ mod tests {
              INSERT INTO public.datawizz_paging_test SELECT generate_series(1, 205)"
         ).await.expect("seed");
         let make = |offset| PageRequest { schema: "public".into(),
-            table: "datawizz_paging_test".into(), offset: Some(offset), limit: Some(100) };
+            table: "datawizz_paging_test".into(), offset: Some(offset), limit: Some(100),
+            filter_column: None, filter: None, sort_column: None, sort_dir: None };
         let Json(first) = table_rows(State(state.clone()), Query(make(0))).await.expect("first");
         let Json(second) = table_rows(State(state.clone()), Query(make(100))).await.expect("second");
         let Json(third) = table_rows(State(state.clone()), Query(make(200))).await.expect("third");
@@ -1387,6 +1446,54 @@ mod tests {
         assert!(!third.has_next);
         assert!(table_rows(State(state), Query(make(-1))).await.is_err());
         client.batch_execute("DROP TABLE public.datawizz_paging_test")
+            .await.expect("cleanup");
+    }
+
+    #[tokio::test]
+    async fn server_table_filter_sort_handles_escaped_text_and_rejects_columns() {
+        let Some(state) = test_state(200, 10_000) else { return; };
+        let client = connect(&state).await.expect("connect");
+        client.batch_execute(
+            "CREATE TABLE public.datawizz_filter_sort_test
+                (id integer PRIMARY KEY, label text, active boolean);
+             INSERT INTO public.datawizz_filter_sort_test VALUES
+                (1, 'Alpha_One', true), (2, 'Beta%Two', false),
+                (3, 'Alpha_X', true), (4, 'alpha_One', false);"
+        ).await.expect("setup");
+        let page = |value: &str, sort_dir: &str, offset: i64| PageRequest {
+            schema: "public".into(), table: "datawizz_filter_sort_test".into(),
+            offset: Some(offset), limit: Some(2),
+            filter_column: Some("label".into()), filter: Some(value.into()),
+            sort_column: Some("id".into()), sort_dir: Some(sort_dir.into()),
+        };
+        let Json(first) = table_rows(State(state.clone()), Query(page("alpha_", "desc", 0)))
+            .await.expect("filtered page");
+        assert_eq!(first.rows.len(), 2);
+        assert!(first.has_next && first.stable_order);
+        assert_eq!(first.rows[0][0].as_deref(), Some("4"));
+        assert_eq!(first.rows[1][0].as_deref(), Some("3"));
+        let Json(second) = table_rows(State(state.clone()), Query(page("alpha_", "desc", 2)))
+            .await.expect("second filtered page");
+        assert_eq!(second.rows.len(), 1);
+        assert_eq!(second.rows[0][0].as_deref(), Some("1"));
+        assert!(!second.has_next);
+        let Json(percent) = table_rows(State(state.clone()), Query(page("%", "asc", 0)))
+            .await.expect("literal percent");
+        assert_eq!(percent.rows.len(), 1);
+        assert_eq!(percent.rows[0][1].as_deref(), Some("Beta%Two"));
+        assert_eq!(percent.rows[0][2].as_deref(), Some("f"));
+        let mut invalid = page("x", "asc", 0);
+        invalid.filter_column = Some("label) OR TRUE--".into());
+        assert_eq!(table_rows(State(state.clone()), Query(invalid)).await
+            .err().expect("invalid column must fail").0, StatusCode::BAD_REQUEST);
+        let mut invalid = page("x", "desc; DROP TABLE x", 0);
+        assert_eq!(table_rows(State(state.clone()), Query(invalid)).await
+            .err().expect("invalid direction must fail").0, StatusCode::BAD_REQUEST);
+        let mut invalid = page("x", "asc", 0);
+        invalid.sort_column = Some("unknown".into());
+        assert_eq!(table_rows(State(state.clone()), Query(invalid)).await
+            .err().expect("invalid sort column must fail").0, StatusCode::BAD_REQUEST);
+        client.batch_execute("DROP TABLE public.datawizz_filter_sort_test")
             .await.expect("cleanup");
     }
 

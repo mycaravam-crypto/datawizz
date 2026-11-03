@@ -5,7 +5,7 @@ Small, fast, local-first PostgreSQL UI written in Rust. One executable; no Node 
 ## MVP features
 - Explore readable PostgreSQL tables, views and columns
 - Execute a single SQL statement (SELECT and permitted writes/DDL)
-- Display bounded results, errors, runtime and affected rows; export **loaded rows only** as CSV
+- Display bounded results, errors, runtime and affected rows; export loaded rows or up to 1,000 server-filtered table rows as CSV
 - Built-in HTML/JavaScript editor. No user accounts or stored credentials.
 - PostgreSQL administration inventory: databases, roles/memberships, sessions, extensions, schemas, relations, indexes, constraints, table statistics, locks, safe server settings, visible table privileges and routines (max 100 entries per section).
 - Guided administration SQL templates for roles, memberships, schemas, table/database grants, database lifecycle, session control and maintenance; generated statements open in a separate editor tab and never run automatically.
@@ -213,6 +213,33 @@ The textarea remains the editor for now. An offline-bundled, accessible editor w
 syntax highlighting and richer parser-backed completion, plus optional explicitly
 consented draft recovery, are still open under #70. No network CDN, hidden query
 persistence, browser extension or new runtime dependency was introduced.
+
+## Data Explorer 2.0 — database filters, ordering and bounded export
+
+Select a table or view, then use **Filter column**, **Contains**, **Sort by**
+and **Direction** above the grid. Click **Apply to database**, or click a table
+column heading to change server-side ordering. Results are fetched from
+PostgreSQL, not just filtered within the loaded 100-row page. The API accepts
+only catalog-validated column names, `asc`/`desc` directions and bound filter
+values. Filters use **case-insensitive literal substring** matching against
+PostgreSQL's text representation (including numbers and dates); `%`, `_` and
+`#` are literal characters, not wildcards. SQL NULL does not match. Paging
+uses a primary-key tie-breaker if the table has one. Without a primary key,
+rows can shift across pages during concurrent updates.
+
+Use **Export filtered CSV** to download up to **1,000 matching rows / 2 MiB**
+(200 rows per request). If more rows match, the export **fails rather than
+silently truncating the file**. Multiple requests do not share a transaction
+snapshot: concurrent writes may change which rows appear in the export.
+Multi-page exports require a primary key. Only current server-filtered database
+rows are exported; staged but unsaved edits are not included. The existing
+**Export loaded CSV** still exports the current SQL-result page. Both exports
+neutralize spreadsheet formula prefixes. All API calls remain authenticated
+through the existing configured bearer token, where enabled.
+
+Larger exports, full transactional snapshots, multi-column predicates and
+a bulk/import-mapping workflow are still open in
+[Data Explorer 2.0 issue #71](https://github.com/mycaravam-crypto/datawizz/issues/71).
 
 ## Bounded CSV import and EXPLAIN preview
 
