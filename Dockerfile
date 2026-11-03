@@ -50,6 +50,9 @@ FROM debian:bookworm-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /build/target/release/datawizz /usr/local/bin/datawizz
+# Writable only by the unprivileged application user; the optional named
+# volume copies this ownership on initial creation.
+RUN mkdir -p /var/lib/datawizz && chown 65532:65532 /var/lib/datawizz && chmod 0700 /var/lib/datawizz
 USER 65532:65532
 ENV HOST=0.0.0.0 PORT=3000
 EXPOSE 3000
