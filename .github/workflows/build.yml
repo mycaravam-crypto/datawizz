@@ -185,6 +185,8 @@ jobs:
           exit 1
       - name: Restricted HTTP credential E2E
         run: node scripts/restricted-http-e2e.cjs
+      - name: Managed profile restart persistence and safe deletion
+        run: node scripts/manager-persistence-e2e.cjs
       - name: Invalid PostgreSQL TLS configuration fails closed
         run: |
           if DATABASE_TLS=verify-full DATABASE_TLS_CA_FILE=/nonexistent/datawizz-ca.pem \
