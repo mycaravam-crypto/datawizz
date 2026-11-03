@@ -380,6 +380,53 @@ const server = http.createServer(async (req, res) => {
       ["Aggregate","Seq Scan · demo"]);
     assert.match(await page.locator("#output .plan-view").textContent(),/Total Cost: 2.3/);
     assert.equal(await page.locator("#output img").count(),0,"Plan text is not HTML");
+    // Query history is bounded and memory-only; reopening never executes SQL.
+    await page.locator("#sql-productivity").evaluate(el=>el.open=true);
+    assert((await page.locator("#sql-history-count").textContent()).includes("History: "));
+    await page.locator("#sql-history-search").fill("EXPLAIN");
+    assert((await page.locator("#sql-history-list [role=listitem]").count())>=1);
+    let productivityPosts=0;
+    await page.route("**/api/query",route=>{productivityPosts++;return route.continue()});
+    await page.locator("#sql-history-list [role=listitem]").first().getByRole("button",{name:"Open"}).click();
+    assert((await page.locator("#sql").inputValue()).includes("EXPLAIN (FORMAT JSON)"));
+    assert.equal(productivityPosts,0,"Opening history must not execute SQL");
+
+    // Explicit Ctrl+Space suggestions reuse available metadata; no extra API calls.
+    await page.locator("#sql").fill("SEL");
+    await page.locator("#sql").press("Control+Space");
+    await page.locator("#sql-completion button").first().waitFor();
+    assert((await page.locator("#sql-completion button").first().textContent()).includes("SELECT"));
+    await page.locator("#sql-completion button").first().click();
+    assert.equal(await page.locator("#sql").inputValue(),"SELECT");
+    await page.locator("#sql").fill("dem");
+    await page.locator("#sql").press("Control+Space");
+    await page.locator("#sql-completion button").first().waitFor();
+    assert((await page.locator("#sql-completion button").first().textContent()).includes("public.demo"));
+    await page.locator("#sql-completion button").first().click();
+    assert.equal(await page.locator("#sql").inputValue(),'"public"."demo"');
+    assert.equal(productivityPosts,0,"Completion must not execute SQL");
+
+    // Saving is opt-in, persists only named scripts, and never persists session history.
+    await page.locator("#sql").fill("SELECT 'saved query'");
+    await page.locator("#sql-script-name").fill("Saved <img src=x onerror=alert(1)>");
+    page.once("dialog",dialog=>dialog.accept());
+    await page.locator("#sql-script-save").click();
+    assert.equal(await page.locator("#sql-scripts-list [role=listitem]").count(),1);
+    assert.equal(await page.locator("#sql-scripts-list img").count(),0,"Script names must render as text");
+    assert.equal(productivityPosts,0);
+    await page.reload();
+    await page.locator("#sql-productivity").evaluate(el=>el.open=true);
+    assert.equal(await page.locator("#sql-history-list [role=listitem]").count(),0,"History is not persisted");
+    assert.equal(await page.locator("#sql-scripts-list [role=listitem]").count(),1,"Saved script survives reload");
+    await page.locator("#sql-scripts-list [role=listitem]").getByRole("button",{name:"Open"}).click();
+    assert.equal(await page.locator("#sql").inputValue(),"SELECT 'saved query'");
+    assert.equal(productivityPosts,0);
+    page.once("dialog",dialog=>dialog.accept());
+    await page.locator("#sql-scripts-list").getByRole("button",{name:/Delete saved script/}).click();
+    assert.equal(await page.locator("#sql-scripts-list [role=listitem]").count(),0);
+    const stored=await page.evaluate(()=>JSON.parse(localStorage.getItem("datawizz.saved-sql.v1")));
+    assert.deepEqual(stored.scripts,[]);
+    await page.unroute("**/api/query");
     console.log("Chromium workbench UI smoke tests passed");
   } finally {await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1}).finally(()=>server.close());

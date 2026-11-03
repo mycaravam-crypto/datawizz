@@ -92,6 +92,30 @@
 .plan-metrics{color:var(--muted);font-size:11px;display:block}
 .admin-ddl-preview{margin-top:12px;padding:12px;border:1px solid var(--border);border-radius:7px;background:var(--panel);font:12px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere;max-height:220px;overflow:auto}
 .admin-ddl-actions{margin-top:8px;display:flex;gap:8px}
+.sql-productivity{box-shadow:none}
+.sql-productivity>summary{list-style:none;cursor:pointer;padding:12px 18px;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:space-between;gap:12px}
+.sql-productivity>summary::-webkit-details-marker{display:none}
+.sql-productivity>summary::before{content:"▸";color:var(--muted);margin-right:6px}
+.sql-productivity[open]>summary::before{content:"▾"}
+.sql-productivity[open]>summary{border-bottom:1px solid var(--border)}
+.sql-productivity-grid{display:grid;grid-template-columns:1fr 1fr}
+.sql-productivity-section{padding:14px 18px;min-width:0}
+.sql-productivity-section+.sql-productivity-section{border-left:1px solid var(--border)}
+.sql-productivity-section h3{margin:0 0 7px;font-size:13px}
+.sql-library-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:9px 0}
+.sql-library-controls .input{flex:1;min-width:155px}
+.sql-library-list{max-height:235px;overflow:auto;display:flex;flex-direction:column;gap:5px}
+.sql-library-entry{display:flex;gap:8px;align-items:center;padding:8px 10px;border:1px solid var(--border);border-radius:8px;min-width:0}
+.sql-library-entry-main{min-width:0;flex:1}
+.sql-library-entry-name{font-weight:650;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sql-library-entry-sql{font:11px/1.4 ui-monospace,monospace;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:3px}
+.sql-library-entry-meta{color:var(--muted);font-size:11px}
+.sql-library-empty{padding:14px;color:var(--muted);font-size:12px}
+.sql-completion{margin-top:8px;background:var(--raised);border:1px solid var(--border);border-radius:8px;max-height:210px;overflow:auto}
+.sql-completion[hidden]{display:none}
+.sql-completion button{display:flex;justify-content:space-between;gap:12px;width:100%;border:0;background:none;color:var(--text);padding:7px 12px;text-align:left;font:12px ui-monospace,monospace}
+.sql-completion button.active,.sql-completion button:hover{background:var(--accent-bg);color:var(--accent)}
+@media(max-width:850px){.sql-productivity-grid{grid-template-columns:1fr}.sql-productivity-section+.sql-productivity-section{border-left:0;border-top:1px solid var(--border)}}
 .admin-sql-preview{margin:0;padding:12px 14px;border:1px solid var(--border);border-radius:9px;background:var(--bg);color:var(--text);white-space:pre-wrap;overflow-wrap:anywhere;min-height:52px;font:12px/1.65 ui-monospace,SFMono-Regular,Consolas,monospace}
 </style>
 </head>
@@ -113,7 +137,27 @@
 <div id="sql-workspace" class="workspace-pane" role="tabpanel" aria-labelledby="workspace-tab-sql">
 <section class="card" aria-labelledby="editor-heading"><div class="card-header"><h2 id="editor-heading" class="card-title">SQL editor</h2><div class="buttons"><button class="btn small" id="copy" type="button">Copy SQL</button><button class="btn small" id="clear" type="button">Clear</button></div></div>
 <div class="tab-strip" id="tabs" role="tablist" aria-label="SQL editor tabs"></div><div class="editor-wrap"><label class="eyebrow" for="sql">Statement</label><textarea id="sql" class="editor" spellcheck="false" aria-label="SQL statement">SELECT current_database(), version();</textarea>
+<div id="sql-completion" class="sql-completion" role="listbox" aria-label="SQL suggestions" hidden></div>
+<div class="note" style="margin-top:5px">SQL suggestions: <kbd>Ctrl</kbd> + <kbd>Space</kbd> · from visible PostgreSQL objects</div>
 <div class="toolbar"><span class="helper">Execute a single statement · <kbd>Ctrl</kbd> / <kbd>⌘</kbd> + <kbd>Enter</kbd></span><div class="buttons"><button id="explain" class="btn small" type="button" title="Prepare EXPLAIN (FORMAT JSON) without executing SQL">Explain SQL</button><button id="run" class="btn primary" type="button">▶ Run query</button></div></div></div></section>
+<details id="sql-productivity" class="card sql-productivity">
+ <summary><span>Query history & saved scripts</span><span class="note" id="sql-history-count">History: 0 · session only</span></summary>
+ <div class="sql-productivity-grid">
+  <section class="sql-productivity-section" aria-labelledby="query-history-heading">
+   <h3 id="query-history-heading">Query history</h3>
+   <p class="note">Recent executions are kept in memory only; closing or refreshing this page clears history.</p>
+   <div class="sql-library-controls"><input id="sql-history-search" class="input" type="search" placeholder="Find executed SQL…" aria-label="Filter query history"><button id="sql-history-clear" class="btn small" type="button">Clear</button></div>
+   <div id="sql-history-list" class="sql-library-list" role="list" aria-label="Recent SQL statements"></div>
+  </section>
+  <section class="sql-productivity-section" aria-labelledby="sql-scripts-heading">
+   <h3 id="sql-scripts-heading">Saved scripts</h3>
+   <p class="note">Only scripts you explicitly save are stored in this browser, unencrypted and shared across databases served from this origin. Never save secrets here.</p>
+   <div class="sql-library-controls"><input id="sql-script-name" class="input" maxlength="80" placeholder="Script name…" aria-label="Saved script name"><button id="sql-script-save" class="btn small" type="button">Save locally</button></div>
+   <p id="sql-script-status" class="note" role="status" aria-live="polite">Up to 20 scripts · 16 KiB each · no automatic execution.</p>
+   <div id="sql-scripts-list" class="sql-library-list" role="list" aria-label="Saved SQL scripts"></div>
+  </section>
+ </div>
+</details>
 <section class="card results" aria-labelledby="result-heading"><div class="results-header"><div><h2 id="result-heading" class="card-title">Query results</h2><div id="message" class="note" role="status" aria-live="polite">Run a query to view data.</div></div><div class="buttons"><label class="filter-bar"><span class="eyebrow">Filter</span><input id="result-filter" class="input" type="search" title="Shortcut: Ctrl/⌘ + Shift + F" placeholder="Loaded rows only" aria-label="Filter loaded result rows"></label><button id="result-filter-clear" type="button" class="btn small" aria-label="Clear result filter" title="Clear filter">Clear filter</button><span class="stat" id="row-stat">0 rows</span><span class="stat" id="time-stat">— ms</span><button class="btn small" id="csv" type="button" disabled>↓ Export loaded CSV</button></div></div>
 <div id="changes-bar" class="changes-bar" hidden><strong id="changes-count">0 pending changes</strong><span class="note">Changes are staged locally. Saving commits all rows atomically.</span><button id="changes-save" type="button" class="btn primary small">Review & save</button><button id="changes-discard" type="button" class="btn small">Discard changes</button></div><div id="row-actions" class="selection-bar row-toolbar" hidden><span class="eyebrow">Table actions</span><button class="btn small" id="browse" type="button" disabled title="Load rows; does not open the editor">↻ Refresh rows</button><button class="btn small" id="insert" type="button" disabled>+ Insert row</button><span id="row-action-hint" class="note" aria-live="polite">Select a row to edit it.</span><span class="note" id="grid-keyboard-hint" title="Keyboard controls for table cells">Cells: arrows navigate · F2/Enter edit · Tab next · Esc cancel</span><span class="toolbar-spacer"></span><button id="edit-mode" class="btn small" type="button" aria-pressed="false" disabled>Edit mode: Off</button><button id="row-edit" class="btn small primary" type="button" disabled>Edit row</button><button id="row-delete" class="btn small" type="button" disabled>Delete</button><button id="bulk-toggle" class="btn small" type="button" aria-controls="selection-bar" aria-expanded="false" disabled>Bulk edit</button><button id="changes-undo" type="button" class="btn small" disabled title="Undo staged change">Undo</button><button id="changes-redo" type="button" class="btn small" disabled title="Redo staged change">Redo</button></div><div id="selection-bar" class="selection-bar" hidden><span id="selection-count" class="stat">0 selected</span><label class="note" for="bulk-column">Column</label><select id="bulk-column" class="input" style="width:auto"></select><input id="bulk-value" aria-label="Value for selected rows" class="input" style="width:180px" placeholder="New value"><label class="note"><input type="checkbox" id="bulk-null"> SQL NULL</label><button type="button" class="btn small" id="bulk-apply">Apply to selected</button><button type="button" class="btn small" id="bulk-clear">Clear selection</button><span class="note">Up to 20 rows · staged and saved atomically</span></div><div id="output" class="results-content" role="region" aria-label="SQL results table" tabindex="0" aria-live="off"><div class="empty"><strong>No results yet</strong><span>Run a statement or choose a table from the explorer.</span></div></div>
 <div id="server-pager" class="server-pager" hidden><button class="btn small" id="server-prev" type="button">← Previous 100</button><span id="server-page-info" class="note"></span><button class="btn small" id="server-next" type="button">Next 100 →</button></div><div class="footer"><span id="result-note" class="note">Only loaded rows can be exported.</span><div class="buttons"><button id="prev" class="btn small" type="button" disabled>← Previous</button><span id="page" class="note">Page —</span><button id="next" class="btn small" type="button" disabled>Next →</button></div></div></section>
@@ -210,6 +254,161 @@ function renderTabs(){
 }
 function closeTab(id){if(busy||tabs.length===1)return;persistTab();const index=tabs.findIndex(t=>t.id===id);if(index<0)return;tabs.splice(index,1);if(activeTab===id){activeTab=tabs[Math.min(index,tabs.length-1)].id;sql.value=tabs.find(t=>t.id===activeTab).sql}renderTabs()}
 renderTabs();
+// Local-first SQL productivity: history is memory-only; saving a script is an explicit action.
+const queryHistory=[],scriptStorageKey="datawizz.saved-sql.v1";
+let savedScripts=[];
+function openSqlDraft(statement,name){
+ if(busy)return;
+ persistTab();
+ const tab={id:nextTab,name:name.slice(0,55),sql:statement};
+ nextTab++;tabs.push(tab);activeTab=tab.id;sql.value=tab.sql;renderTabs();showWorkspace("sql");sql.focus();
+}
+function addQueryHistory(statement,outcome,duration){
+ if(!statement.trim()||statement.length>16000)return; // Never store a truncated/replayable fragment.
+ queryHistory.unshift({sql:statement,outcome,duration:duration??null,time:new Date().toLocaleTimeString()});
+ if(queryHistory.length>40)queryHistory.length=40;
+ renderQueryHistory();
+}
+function renderQueryHistory(){
+ text($("sql-history-count"),"History: "+queryHistory.length+" · session only");
+ const list=$("sql-history-list"),query=$("sql-history-search").value.toLocaleLowerCase().trim();
+ list.replaceChildren();
+ const matching=queryHistory.filter(entry=>entry.sql.toLocaleLowerCase().includes(query));
+ if(!matching.length){list.append(element("div","sql-library-empty",query?"No matching queries.":"No queries executed in this session."));return}
+ for(const item of matching){
+  const row=element("div","sql-library-entry");row.setAttribute("role","listitem");
+  const main=element("div","sql-library-entry-main");
+  main.append(element("div","sql-library-entry-name",item.outcome+" · "+item.time+
+   (item.duration!==null?" · "+item.duration+" ms":"")));
+  main.append(element("div","sql-library-entry-sql",item.sql.replace(/\s+/g," ").slice(0,200)));
+  const open=element("button","btn small","Open");open.type="button";open.title="Open query in a new tab; never execute";
+  open.onclick=()=>openSqlDraft(item.sql,"History "+nextTab);
+  row.append(main,open);list.append(row);
+ }
+}
+function loadSavedScripts(){
+ try{
+  const payload=JSON.parse(localStorage.getItem(scriptStorageKey)||"null");
+  if(payload?.version!==1||!Array.isArray(payload.scripts))return [];
+  return payload.scripts.slice(0,20).filter(item=>
+   typeof item.name==="string"&&item.name.length>0&&item.name.length<=80&&
+   typeof item.sql==="string"&&item.sql.length>0&&item.sql.length<=16000&&
+   Number.isFinite(item.at)&&item.at>0).map(item=>({name:item.name,sql:item.sql,at:item.at}));
+ }catch{return []}
+}
+function renderSavedScripts(){
+ const list=$("sql-scripts-list");list.replaceChildren();
+ if(!savedScripts.length){list.append(element("div","sql-library-empty","No scripts saved in this browser."));return}
+ for(const item of savedScripts){
+  const row=element("div","sql-library-entry");row.setAttribute("role","listitem");
+  const main=element("div","sql-library-entry-main");
+  main.append(element("div","sql-library-entry-name",item.name));
+  main.append(element("div","sql-library-entry-sql",item.sql.replace(/\s+/g," ").slice(0,200)));
+  const open=element("button","btn small","Open");open.type="button";open.title="Open saved SQL as a new tab without executing";
+  open.onclick=()=>openSqlDraft(item.sql,item.name);
+  const remove=element("button","btn small","Delete");remove.type="button";
+  remove.setAttribute("aria-label","Delete saved script "+item.name);
+  remove.onclick=()=>{
+   if(!confirm('Delete locally saved script "'+item.name+'"?'))return;
+   const updated=savedScripts.filter(entry=>entry.name!==item.name);
+   try{localStorage.setItem(scriptStorageKey,JSON.stringify({version:1,scripts:updated}));savedScripts=updated;
+     text($("sql-script-status"),"Saved script deleted.");renderSavedScripts()}
+   catch{text($("sql-script-status"),"Browser storage unavailable. Script not deleted.")}
+  };
+  row.append(main,open,remove);list.append(row);
+ }
+}
+savedScripts=loadSavedScripts();
+renderSavedScripts();renderQueryHistory();
+$("sql-history-search").addEventListener("input",renderQueryHistory);
+$("sql-history-clear").onclick=()=>{queryHistory.length=0;renderQueryHistory()};
+$("sql-script-save").onclick=()=>{
+ const name=$("sql-script-name").value.trim(),statement=sql.value;
+ if(!name||name.length>80||/[\u0000-\u001f\u007f]/.test(name)){
+  text($("sql-script-status"),"Choose a script name of 1–80 characters without control characters.");return
+ }
+ if(!statement.trim()||new TextEncoder().encode(statement).length>16000){
+  text($("sql-script-status"),"Script must contain SQL and be at most 16 KiB.");return
+ }
+ const previous=savedScripts.find(item=>item.name.toLocaleLowerCase()===name.toLocaleLowerCase());
+ if(!previous&&savedScripts.length>=20){
+  text($("sql-script-status"),"Limit of 20 saved scripts reached. Delete one first.");return
+ }
+ if(!confirm((previous?"Overwrite saved script? ":"Store script in this browser? ")+
+  "SQL is stored unencrypted and may be visible to other users of this browser. Do not save secrets."))return;
+ const updated=[{name,sql:statement,at:Date.now()},...savedScripts.filter(item=>item!==previous)];
+ const serialized=JSON.stringify({version:1,scripts:updated});
+ if(new TextEncoder().encode(serialized).length>120000){
+  text($("sql-script-status"),"Local storage limit reached. Delete an old script.");return
+ }
+ try{
+  localStorage.setItem(scriptStorageKey,serialized);savedScripts=updated;
+  $("sql-script-name").value="";
+  text($("sql-script-status"),"Saved explicitly to this browser (unencrypted).");renderSavedScripts();
+ }catch{text($("sql-script-status"),"Browser storage unavailable. Script was not saved.")}
+};
+
+// Explicit Ctrl+Space completion from already visible PostgreSQL metadata.
+// This is a small textarea accessory, not a custom SQL parser or editor engine.
+const sqlWords=["SELECT","FROM","WHERE","JOIN","LEFT JOIN","ON","GROUP BY","ORDER BY","LIMIT",
+ "INSERT INTO","VALUES","UPDATE","SET","DELETE FROM","CREATE TABLE","ALTER TABLE",
+ "AND","OR","NOT","NULL","IS NULL","AS","DISTINCT","COUNT","EXPLAIN"];
+let completionItems=[],completionStart=0,completionEnd=0,completionIndex=0;
+function hideSqlCompletion(){completionItems=[];$("sql-completion").hidden=true;$("sql-completion").replaceChildren()}
+function drawSqlCompletion(){
+ const list=$("sql-completion");list.replaceChildren();
+ completionItems.forEach((item,index)=>{
+  const b=element("button",index===completionIndex?"active":"",item.label);
+  b.type="button";b.setAttribute("role","option");b.setAttribute("aria-selected",String(index===completionIndex));
+  const kind=element("span","note",item.kind);b.append(kind);
+  b.onmousedown=e=>e.preventDefault();b.onclick=()=>acceptSqlCompletion(index);list.append(b);
+ });
+ list.hidden=!completionItems.length;
+}
+function offerSqlCompletion(){
+ const position=sql.selectionStart,ending=sql.value.slice(0,position);
+ const prefix=(ending.match(/[a-zA-Z_][a-zA-Z_0-9]*$/)||[""])[0];
+ const dotted=ending.slice(0,position-prefix.length).endsWith(".");
+ const proposals=[
+  ...sqlWords.map(word=>({label:word,insert:word,kind:"keyword"})),
+  ...objects.map(obj=>({label:obj.schema+"."+obj.name,
+   insert:dotted?quoted(obj.name):quoted(obj.schema)+"."+quoted(obj.name),kind:obj.kind})),
+  ...selectedColumns.map(col=>({label:col.name,insert:quoted(col.name),kind:"column"}))
+ ];
+ const seen=new Set();
+ completionItems=proposals.filter(item=>{
+  const key=item.kind+":"+item.insert;
+  if(seen.has(key)||!(item.label.toLocaleLowerCase().includes(prefix.toLocaleLowerCase())))return false;
+  seen.add(key);return true;
+ }).sort((a,b)=>Number(b.label.toLocaleLowerCase().startsWith(prefix.toLocaleLowerCase()))-
+  Number(a.label.toLocaleLowerCase().startsWith(prefix.toLocaleLowerCase()))).slice(0,12);
+ completionStart=position-prefix.length;completionEnd=sql.selectionEnd;completionIndex=0;
+ drawSqlCompletion();
+}
+function acceptSqlCompletion(index){
+ const item=completionItems[index];if(!item)return;
+ sql.setRangeText(item.insert,completionStart,completionEnd,"end");persistTab();
+ hideSqlCompletion();sql.focus();
+}
+sql.addEventListener("input",hideSqlCompletion);
+sql.addEventListener("blur",()=>{if(!document.activeElement?.closest("#sql-completion"))hideSqlCompletion()});
+sql.addEventListener("keydown",e=>{
+ if((e.ctrlKey||e.metaKey)&&e.key==="Enter"){hideSqlCompletion();return}
+ if((e.ctrlKey||e.metaKey)&&e.code==="Space"){
+  e.preventDefault();e.stopImmediatePropagation();offerSqlCompletion();return
+ }
+ if(!completionItems.length)return;
+ if(e.key==="Escape"){e.preventDefault();e.stopImmediatePropagation();hideSqlCompletion();return}
+ if(e.key==="ArrowDown"||e.key==="ArrowUp"){
+  e.preventDefault();e.stopImmediatePropagation();
+  completionIndex=(completionIndex+(e.key==="ArrowDown"?1:-1)+completionItems.length)%completionItems.length;
+  drawSqlCompletion();return
+ }
+ if(e.key==="Enter"||e.key==="Tab"){
+  e.preventDefault();e.stopImmediatePropagation();acceptSqlCompletion(completionIndex);
+ }
+},true);
+
 const pageSize=50;
 const selectedRows=new Map();
 const changes=new Map();
@@ -515,13 +714,15 @@ $("server-next").onclick=()=>{if(tablePage&&tablePage.hasNext){tablePage.offset+
 async function run(){
  if(changes.size&&!confirm("Discard staged changes and run SQL?"))return;changes.clear();resetEditHistory();updateChanges();resetSelection(); ++tableRequest;tablePage=null;$("server-pager").hidden=true;
  if(busy)return;tableMode=false;if(!sql.value.trim()){status("No statement","warning");info("Enter a SQL statement first.");sql.focus();return}
+ const submittedSql=sql.value;
  busy=true;$("run").disabled=true;text($("run"),"Running…");$("csv").disabled=true;status("Running","running");info("Executing SQL…");output.replaceChildren(element("div","empty","Running query…"));last=null;
  $("prev").disabled=true;$("next").disabled=true;text($("page"),"Page —");text($("row-stat"),"0 rows");text($("time-stat"),"— ms");
- try{const result=await api("/api/query",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sql:sql.value})});last=result;page=0;sortColumn=-1;renderResults();text($("time-stat"),result.duration_ms+" ms");$("csv").disabled=!result.columns.length;
+ try{const result=await api("/api/query",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sql:submittedSql})});last=result;page=0;sortColumn=-1;renderResults();text($("time-stat"),result.duration_ms+" ms");$("csv").disabled=!result.columns.length;
   info(result.columns.length?"Showing "+result.rows.length+" loaded rows"+(result.truncated?" (truncated)":""):result.affected+" affected rows");
   text($("result-note"),result.truncated?"Result truncated at configured row limit. CSV contains loaded rows only.":"Sorting, paging and CSV apply to loaded rows only.");
   status(result.truncated?"Truncated":"Completed",result.truncated?"warning":"success");
- }catch(e){last=null;output.replaceChildren(element("div","error-box",e.message));info("Query failed.");status("Error","error");text($("result-note"),"Review the statement and try again.")}
+   addQueryHistory(submittedSql,"Success",result.duration_ms);
+  }catch(e){addQueryHistory(submittedSql,"Failed",null);last=null;output.replaceChildren(element("div","error-box",e.message));info("Query failed.");status("Error","error");text($("result-note"),"Review the statement and try again.")}
  finally{busy=false;$("run").disabled=false;text($("run"),"▶ Run query")}}
 $("result-filter").addEventListener("input",()=>{page=0;renderResults()});
 $("result-filter-clear").onclick=()=>{$("result-filter").value="";page=0;renderResults();$("result-filter").focus()};
