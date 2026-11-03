@@ -563,6 +563,89 @@ struct AdminExtension {
     schema: String,
 }
 
+
+#[derive(Serialize)]
+struct AdminSchema {
+    name: String,
+    owner: String,
+    can_use: bool,
+    can_create: bool,
+}
+
+#[derive(Serialize)]
+struct AdminRelation {
+    schema: String,
+    name: String,
+    kind: String,
+    owner: String,
+    estimated_rows: i64,
+    size_bytes: i64,
+}
+
+#[derive(Serialize)]
+struct AdminIndex {
+    schema: String,
+    table: String,
+    name: String,
+    valid: bool,
+    scans: i64,
+}
+
+#[derive(Serialize)]
+struct AdminConstraint {
+    schema: String,
+    table: String,
+    name: String,
+    kind: String,
+    definition: String,
+}
+
+#[derive(Serialize)]
+struct AdminTableStats {
+    schema: String,
+    table: String,
+    live_rows: i64,
+    dead_rows: i64,
+    seq_scans: i64,
+    index_scans: i64,
+    last_autovacuum: Option<String>,
+    last_autoanalyze: Option<String>,
+}
+
+#[derive(Serialize)]
+struct AdminLock {
+    pid: Option<i32>,
+    relation: String,
+    mode: String,
+    granted: bool,
+}
+
+#[derive(Serialize)]
+struct AdminSetting {
+    name: String,
+    value: String,
+    unit: Option<String>,
+    pending_restart: bool,
+}
+
+#[derive(Serialize)]
+struct AdminPrivilege {
+    schema: String,
+    table: String,
+    grantee: String,
+    privilege: String,
+    grantable: bool,
+}
+
+#[derive(Serialize)]
+struct AdminRoutine {
+    schema: String,
+    name: String,
+    arguments: String,
+    kind: String,
+    owner: String,
+}
+
 #[derive(Serialize)]
 struct AdminOverview {
     databases: Vec<AdminDatabase>,
@@ -570,6 +653,15 @@ struct AdminOverview {
     memberships: Vec<AdminMembership>,
     sessions: Vec<AdminSession>,
     extensions: Vec<AdminExtension>,
+    schemas: Vec<AdminSchema>,
+    relations: Vec<AdminRelation>,
+    indexes: Vec<AdminIndex>,
+    constraints: Vec<AdminConstraint>,
+    table_stats: Vec<AdminTableStats>,
+    locks: Vec<AdminLock>,
+    settings: Vec<AdminSetting>,
+    privileges: Vec<AdminPrivilege>,
+    routines: Vec<AdminRoutine>,
 }
 
 async fn admin_overview(State(state): State<AppState>) -> ApiResult<AdminOverview> {
@@ -601,6 +693,95 @@ async fn admin_overview(State(state): State<AppState>) -> ApiResult<AdminOvervie
          ORDER BY e.extname LIMIT 100", &[]
     ).await.map_err(|e| postgres_error(&e))?;
 
+
+    let schemas = client.query(
+        "SELECT n.nspname::text, pg_catalog.pg_get_userbyid(n.nspowner)::text,
+                has_schema_privilege(n.oid, 'USAGE'), has_schema_privilege(n.oid, 'CREATE')
+         FROM pg_catalog.pg_namespace n
+         WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+           AND n.nspname NOT LIKE 'pg_toast%' AND n.nspname NOT LIKE 'pg_temp%'
+         ORDER BY n.nspname LIMIT 100", &[]
+    ).await.map_err(|e| postgres_error(&e))?;
+    let relations = client.query(
+        "SELECT n.nspname::text, c.relname::text,
+                CASE c.relkind WHEN 'r' THEN 'table' WHEN 'p' THEN 'partitioned table'
+                     WHEN 'v' THEN 'view' WHEN 'm' THEN 'materialized view'
+                     WHEN 'f' THEN 'foreign table' WHEN 'S' THEN 'sequence' END::text,
+                pg_catalog.pg_get_userbyid(c.relowner)::text,
+                GREATEST(c.reltuples::bigint, 0),
+                CASE WHEN c.relkind IN ('r','p','m','S') THEN pg_catalog.pg_total_relation_size(c.oid)
+                     ELSE 0::bigint END
+         FROM pg_catalog.pg_class c
+         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+         WHERE c.relkind IN ('r','p','v','m','f','S')
+           AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+           AND n.nspname NOT LIKE 'pg_toast%' AND n.nspname NOT LIKE 'pg_temp%'
+         ORDER BY n.nspname, c.relname LIMIT 100", &[]
+    ).await.map_err(|e| postgres_error(&e))?;
+    let indexes = client.query(
+        "SELECT s.schemaname::text, s.relname::text, s.indexrelname::text,
+                i.indisvalid, COALESCE(s.idx_scan, 0)::bigint
+         FROM pg_catalog.pg_stat_user_indexes s
+         JOIN pg_catalog.pg_index i ON i.indexrelid = s.indexrelid
+         ORDER BY s.schemaname, s.relname, s.indexrelname LIMIT 100", &[]
+    ).await.map_err(|e| postgres_error(&e))?;
+    let constraints = client.query(
+        "SELECT n.nspname::text, c.relname::text, con.conname::text,
+                con.contype::text, pg_catalog.pg_get_constraintdef(con.oid)::text
+         FROM pg_catalog.pg_constraint con
+         JOIN pg_catalog.pg_class c ON c.oid = con.conrelid
+         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+         WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+           AND n.nspname NOT LIKE 'pg_toast%' AND n.nspname NOT LIKE 'pg_temp%'
+         ORDER BY n.nspname, c.relname, con.conname LIMIT 100", &[]
+    ).await.map_err(|e| postgres_error(&e))?;
+    let table_stats = client.query(
+        "SELECT s.schemaname::text, s.relname::text, s.n_live_tup::bigint,
+                s.n_dead_tup::bigint, s.seq_scan::bigint, COALESCE(s.idx_scan, 0)::bigint,
+                to_char(s.last_autovacuum, 'YYYY-MM-DD HH24:MI')::text,
+                to_char(s.last_autoanalyze, 'YYYY-MM-DD HH24:MI')::text
+         FROM pg_catalog.pg_stat_user_tables s
+         ORDER BY s.schemaname, s.relname LIMIT 100", &[]
+    ).await.map_err(|e| postgres_error(&e))?;
+    let locks = client.query(
+        "SELECT l.pid,
+                (n.nspname || '.' || c.relname)::text,
+                l.mode::text, l.granted
+         FROM pg_catalog.pg_locks l
+         JOIN pg_catalog.pg_class c ON c.oid = l.relation
+         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+         WHERE l.locktype = 'relation'
+           AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+           AND n.nspname NOT LIKE 'pg_toast%' AND n.nspname NOT LIKE 'pg_temp%'
+         ORDER BY l.granted, l.pid NULLS LAST LIMIT 100", &[]
+    ).await.map_err(|e| postgres_error(&e))?;
+    // Explicit allowlist: pg_settings may contain infrastructure paths and sensitive values.
+    let settings = client.query(
+        "SELECT name::text, setting::text, unit::text, pending_restart
+         FROM pg_catalog.pg_settings
+         WHERE name IN ('server_version', 'max_connections', 'shared_buffers', 'work_mem',
+                        'maintenance_work_mem', 'statement_timeout', 'autovacuum',
+                        'max_wal_size', 'wal_level', 'idle_in_transaction_session_timeout')
+         ORDER BY name LIMIT 100", &[]
+    ).await.map_err(|e| postgres_error(&e))?;
+    let privileges = client.query(
+        "SELECT table_schema::text, table_name::text, grantee::text,
+                privilege_type::text, (is_grantable = 'YES')
+         FROM information_schema.role_table_grants
+         ORDER BY table_schema, table_name, grantee, privilege_type LIMIT 100", &[]
+    ).await.map_err(|e| postgres_error(&e))?;
+    let routines = client.query(
+        "SELECT n.nspname::text, p.proname::text,
+                pg_catalog.pg_get_function_identity_arguments(p.oid)::text,
+                CASE WHEN p.prokind = 'p' THEN 'procedure' ELSE 'function' END::text,
+                pg_catalog.pg_get_userbyid(p.proowner)::text
+         FROM pg_catalog.pg_proc p
+         JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+         WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+           AND n.nspname NOT LIKE 'pg_toast%' AND n.nspname NOT LIKE 'pg_temp%'
+         ORDER BY n.nspname, p.proname, p.oid LIMIT 100", &[]
+    ).await.map_err(|e| postgres_error(&e))?;
+
     Ok(Json(AdminOverview {
         databases: databases.iter().map(|r| AdminDatabase {
             name: r.get(0), owner: r.get(1), allow_connections: r.get(2),
@@ -618,6 +799,41 @@ async fn admin_overview(State(state): State<AppState>) -> ApiResult<AdminOvervie
         }).collect(),
         extensions: extensions.iter().map(|r| AdminExtension {
             name: r.get(0), version: r.get(1), schema: r.get(2),
+        }).collect(),
+
+        schemas: schemas.iter().map(|r| AdminSchema {
+            name: r.get(0), owner: r.get(1), can_use: r.get(2), can_create: r.get(3),
+        }).collect(),
+        relations: relations.iter().map(|r| AdminRelation {
+            schema: r.get(0), name: r.get(1), kind: r.get(2), owner: r.get(3),
+            estimated_rows: r.get(4), size_bytes: r.get(5),
+        }).collect(),
+        indexes: indexes.iter().map(|r| AdminIndex {
+            schema: r.get(0), table: r.get(1), name: r.get(2),
+            valid: r.get(3), scans: r.get(4),
+        }).collect(),
+        constraints: constraints.iter().map(|r| AdminConstraint {
+            schema: r.get(0), table: r.get(1), name: r.get(2),
+            kind: r.get(3), definition: r.get(4),
+        }).collect(),
+        table_stats: table_stats.iter().map(|r| AdminTableStats {
+            schema: r.get(0), table: r.get(1), live_rows: r.get(2),
+            dead_rows: r.get(3), seq_scans: r.get(4), index_scans: r.get(5),
+            last_autovacuum: r.get(6), last_autoanalyze: r.get(7),
+        }).collect(),
+        locks: locks.iter().map(|r| AdminLock {
+            pid: r.get(0), relation: r.get(1), mode: r.get(2), granted: r.get(3),
+        }).collect(),
+        settings: settings.iter().map(|r| AdminSetting {
+            name: r.get(0), value: r.get(1), unit: r.get(2), pending_restart: r.get(3),
+        }).collect(),
+        privileges: privileges.iter().map(|r| AdminPrivilege {
+            schema: r.get(0), table: r.get(1), grantee: r.get(2),
+            privilege: r.get(3), grantable: r.get(4),
+        }).collect(),
+        routines: routines.iter().map(|r| AdminRoutine {
+            schema: r.get(0), name: r.get(1), arguments: r.get(2),
+            kind: r.get(3), owner: r.get(4),
         }).collect(),
     }))
 }
@@ -682,6 +898,40 @@ mod tests {
         for hidden in ["rolpassword", "client_addr", "\"query\"", "DATABASE_URL"] {
             assert!(!json.contains(hidden), "admin response must not expose {hidden}");
         }
+    }
+
+
+    #[tokio::test]
+    async fn admin_details_cover_schemas_constraints_indexes_and_safe_settings() {
+        let Some(state) = test_state(200, 10_000) else { return; };
+        let client = connect(&state).await.expect("connect");
+        client.batch_execute(
+            "DROP SCHEMA IF EXISTS datawizz_admin_test CASCADE;
+             CREATE SCHEMA datawizz_admin_test;
+             CREATE TABLE datawizz_admin_test.items (id integer PRIMARY KEY, label text);
+             CREATE INDEX items_label_idx ON datawizz_admin_test.items (label);"
+        ).await.expect("create admin catalog fixtures");
+
+        let Json(admin) = admin_overview(State(state)).await.expect("read admin details");
+        assert!(admin.schemas.iter().any(|s| s.name == "datawizz_admin_test"));
+        assert!(admin.relations.iter().any(|r| r.schema == "datawizz_admin_test"
+            && r.name == "items" && r.kind == "table"));
+        assert!(admin.indexes.iter().any(|i| i.schema == "datawizz_admin_test"
+            && i.name == "items_label_idx" && i.valid));
+        assert!(admin.constraints.iter().any(|c| c.schema == "datawizz_admin_test"
+            && c.name == "items_pkey" && c.kind == "p"));
+        assert!(admin.table_stats.iter().any(|t| t.schema == "datawizz_admin_test" && t.table == "items"));
+        assert!(admin.settings.iter().any(|s| s.name == "max_connections"));
+        assert!(admin.settings.iter().all(|s| matches!(s.name.as_str(),
+            "server_version" | "max_connections" | "shared_buffers" | "work_mem"
+            | "maintenance_work_mem" | "statement_timeout" | "autovacuum"
+            | "max_wal_size" | "wal_level" | "idle_in_transaction_session_timeout")));
+        let serialized = serde_json::to_string(&admin).expect("serialize inventory");
+        for secret in ["rolpassword", "client_addr", "\"query\"", "ssl_key_file"] {
+            assert!(!serialized.contains(secret), "unexpected sensitive admin field: {secret}");
+        }
+        client.batch_execute("DROP SCHEMA datawizz_admin_test CASCADE")
+            .await.expect("cleanup admin fixtures");
     }
 
     fn test_state(max_rows: usize, timeout_ms: u64) -> Option<AppState> {

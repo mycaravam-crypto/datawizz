@@ -24,6 +24,24 @@ const { chromium } = require("playwright");
     const adminJson=JSON.stringify(admin);
     for(const hidden of ['"query"','"rolpassword"','"client_addr"'])assert(!adminJson.includes(hidden));
 
+    assert(admin.schemas.some(s=>s.name==="public"));
+    assert(admin.relations.some(r=>r.schema==="public"&&r.name==="datawizz_browser_e2e"));
+    assert(admin.indexes.some(i=>i.table==="datawizz_browser_e2e"&&i.valid));
+    assert(admin.constraints.some(c=>c.table==="datawizz_browser_e2e"&&c.kind==="p"));
+    assert(admin.table_stats.some(t=>t.table==="datawizz_browser_e2e"));
+    assert(admin.settings.some(s=>s.name==="max_connections"));
+    assert(Array.isArray(admin.locks)&&Array.isArray(admin.privileges)&&Array.isArray(admin.routines));
+    await page.locator("#admin-task").selectOption("table-grant");
+    await page.locator("#admin-field-0").fill("public");
+    await page.locator("#admin-field-1").fill("datawizz_browser_e2e");
+    await page.locator("#admin-field-2").fill("PUBLIC");
+    await page.locator("#admin-generate").click();
+    assert.equal(await page.locator("#admin-sql-preview").textContent(),'GRANT SELECT ON TABLE "public"."datawizz_browser_e2e" TO PUBLIC;');
+    await page.locator("#admin-open-sql").click();
+    assert.match(await page.locator("#sql").inputValue(),/^GRANT SELECT ON TABLE/);
+    // The generated statement is never run automatically; the existing SQL tab is preserved.
+
+
     await page.locator("#filter").fill("datawizz_browser_e2e");
     await page.getByRole("button",{name:"Preview public.datawizz_browser_e2e"}).click();
     // Column metadata loads asynchronously; row editing is enabled only after it arrives.
