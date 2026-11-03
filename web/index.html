@@ -105,7 +105,7 @@
 <div id="sql-workspace" class="workspace-pane" role="tabpanel" aria-labelledby="workspace-tab-sql">
 <section class="card" aria-labelledby="editor-heading"><div class="card-header"><h2 id="editor-heading" class="card-title">SQL editor</h2><div class="buttons"><button class="btn small" id="copy" type="button">Copy SQL</button><button class="btn small" id="clear" type="button">Clear</button></div></div>
 <div class="tab-strip" id="tabs" role="tablist" aria-label="SQL editor tabs"></div><div class="editor-wrap"><label class="eyebrow" for="sql">Statement</label><textarea id="sql" class="editor" spellcheck="false" aria-label="SQL statement">SELECT current_database(), version();</textarea>
-<div class="toolbar"><span class="helper">Execute a single statement · <kbd>Ctrl</kbd> / <kbd>⌘</kbd> + <kbd>Enter</kbd></span><div class="buttons"><button id="run" class="btn primary" type="button">▶ Run query</button></div></div></div></section>
+<div class="toolbar"><span class="helper">Execute a single statement · <kbd>Ctrl</kbd> / <kbd>⌘</kbd> + <kbd>Enter</kbd></span><div class="buttons"><button id="explain" class="btn small" type="button" title="Prepare EXPLAIN (FORMAT JSON) without executing SQL">Explain SQL</button><button id="run" class="btn primary" type="button">▶ Run query</button></div></div></div></section>
 <section class="card results" aria-labelledby="result-heading"><div class="results-header"><div><h2 id="result-heading" class="card-title">Query results</h2><div id="message" class="note" role="status" aria-live="polite">Run a query to view data.</div></div><div class="buttons"><label class="filter-bar"><span class="eyebrow">Filter</span><input id="result-filter" class="input" type="search" title="Shortcut: Ctrl/⌘ + Shift + F" placeholder="Loaded rows only" aria-label="Filter loaded result rows"></label><button id="result-filter-clear" type="button" class="btn small" aria-label="Clear result filter" title="Clear filter">Clear filter</button><span class="stat" id="row-stat">0 rows</span><span class="stat" id="time-stat">— ms</span><button class="btn small" id="csv" type="button" disabled>↓ Export loaded CSV</button></div></div>
 <div id="changes-bar" class="changes-bar" hidden><strong id="changes-count">0 pending changes</strong><span class="note">Changes are staged locally. Saving commits all rows atomically.</span><button id="changes-save" type="button" class="btn primary small">Review & save</button><button id="changes-discard" type="button" class="btn small">Discard changes</button></div><div id="row-actions" class="selection-bar row-toolbar" hidden><span class="eyebrow">Table actions</span><button class="btn small" id="browse" type="button" disabled title="Load rows; does not open the editor">↻ Refresh rows</button><button class="btn small" id="insert" type="button" disabled>+ Insert row</button><span id="row-action-hint" class="note" aria-live="polite">Select a row to edit it.</span><span class="note" id="grid-keyboard-hint" title="Keyboard controls for table cells">Cells: arrows navigate · F2/Enter edit · Tab next · Esc cancel</span><span class="toolbar-spacer"></span><button id="edit-mode" class="btn small" type="button" aria-pressed="false" disabled>Edit mode: Off</button><button id="row-edit" class="btn small primary" type="button" disabled>Edit row</button><button id="row-delete" class="btn small" type="button" disabled>Delete</button><button id="bulk-toggle" class="btn small" type="button" aria-controls="selection-bar" aria-expanded="false" disabled>Bulk edit</button><button id="changes-undo" type="button" class="btn small" disabled title="Undo staged change">Undo</button><button id="changes-redo" type="button" class="btn small" disabled title="Redo staged change">Redo</button></div><div id="selection-bar" class="selection-bar" hidden><span id="selection-count" class="stat">0 selected</span><label class="note" for="bulk-column">Column</label><select id="bulk-column" class="input" style="width:auto"></select><input id="bulk-value" aria-label="Value for selected rows" class="input" style="width:180px" placeholder="New value"><label class="note"><input type="checkbox" id="bulk-null"> SQL NULL</label><button type="button" class="btn small" id="bulk-apply">Apply to selected</button><button type="button" class="btn small" id="bulk-clear">Clear selection</button><span class="note">Up to 20 rows · staged and saved atomically</span></div><div id="output" class="results-content" role="region" aria-label="SQL results table" tabindex="0" aria-live="off"><div class="empty"><strong>No results yet</strong><span>Run a statement or choose a table from the explorer.</span></div></div>
 <div id="server-pager" class="server-pager" hidden><button class="btn small" id="server-prev" type="button">← Previous 100</button><span id="server-page-info" class="note"></span><button class="btn small" id="server-next" type="button">Next 100 →</button></div><div class="footer"><span id="result-note" class="note">Only loaded rows can be exported.</span><div class="buttons"><button id="prev" class="btn small" type="button" disabled>← Previous</button><span id="page" class="note">Page —</span><button id="next" class="btn small" type="button" disabled>Next →</button></div></div></section>
@@ -149,6 +149,18 @@
   <pre id="admin-sql-preview" class="admin-sql-preview" aria-live="polite">Choose an operation to prepare SQL.</pre>
   <p id="admin-sql-message" class="note" role="status">Generated SQL uses quoted identifiers. PostgreSQL permissions are enforced when you explicitly run it.</p>
  </div>
+   </section>
+   <section id="admin-csv-view" class="admin-subview" aria-label="CSV import preview" hidden>
+     <div class="admin-sql-intro">Preview a bounded, single-statement CSV import. Columns map by header name. Nothing executes automatically.</div>
+     <div class="admin-sql-builder">
+      <label class="admin-field" for="admin-csv-schema"><span>Schema</span><input id="admin-csv-schema" class="input" value="public" autocomplete="off"></label>
+      <label class="admin-field" for="admin-csv-table"><span>Table</span><input id="admin-csv-table" class="input" autocomplete="off" placeholder="Target table"></label>
+      <label class="admin-field" for="admin-csv-file"><span>UTF-8 CSV with header (max 16 KiB, 100 rows, 20 columns)</span><input id="admin-csv-file" class="input" type="file" accept=".csv,text/csv"></label>
+      <label class="note"><input id="admin-csv-null" type="checkbox"> Treat empty fields as SQL NULL (default: empty string)</label>
+      <div class="buttons"><button id="admin-csv-preview" class="btn" type="button">Preview CSV import SQL</button><button id="admin-csv-open" class="btn primary" type="button" disabled>Open in SQL console</button></div>
+      <p id="admin-csv-status" class="note" role="status">CSV is processed locally; SQL is only executed after manually choosing Run query.</p>
+      <pre id="admin-csv-sql" class="admin-sql-preview" aria-live="polite">Select a CSV file to preview.</pre>
+     </div>
    </section>
   </div>
  </div>
@@ -525,7 +537,10 @@ function renderAdminNavigation(){
  const tools=element("details");tools.open=true;tools.append(element("summary","","Tools"));
  const action=element("button","admin-tree-button"+(adminSelected==="sql"?" active":""),"SQL templates");
  action.type="button";action.id="admin-sql-nav";action.setAttribute("aria-current",adminSelected==="sql"?"page":"false");
- action.onclick=()=>selectAdminView("sql");tools.append(action);nav.append(tools);
+ action.onclick=()=>selectAdminView("sql");tools.append(action);
+ const csv=element("button","admin-tree-button"+(adminSelected==="csv"?" active":""),"CSV import preview");
+ csv.type="button";csv.id="admin-csv-nav";csv.onclick=()=>selectAdminView("csv");
+ tools.append(csv);nav.append(tools);
 }
 function selectAdminView(id){
  adminSelected=id;$("admin-section-search").value="";
@@ -535,14 +550,15 @@ function adminDisplayValue(value){
  return value==null?"—":typeof value==="boolean"?(value?"Yes":"No"):String(value);
 }
 function renderAdminView(){
- const sqlMode=adminSelected==="sql";
+ const sqlMode=adminSelected==="sql",csvMode=adminSelected==="csv",toolMode=sqlMode||csvMode;
  const section=adminSections.find(s=>s.id===adminSelected);
- $("admin-data-view").hidden=sqlMode;$("admin-sql-view").hidden=!sqlMode;$("admin-filterbar").hidden=sqlMode;
- text($("admin-path"),"PostgreSQL / "+(sqlMode?"Tools":section.group));
- text($("admin-view-title"),sqlMode?"SQL templates":section.title);
+ $("admin-data-view").hidden=toolMode;$("admin-sql-view").hidden=!sqlMode;$("admin-csv-view").hidden=!csvMode;
+ $("admin-filterbar").hidden=toolMode;
+ text($("admin-path"),"PostgreSQL / "+(toolMode?"Tools":section.group));
+ text($("admin-view-title"),sqlMode?"SQL templates":csvMode?"CSV import preview":section.title);
  const output=$("admin-output"),inspector=$("admin-detail");
  inspector.hidden=true;inspector.replaceChildren();
- if(sqlMode){text($("admin-view-count"),"Manual review");return}
+ if(toolMode){text($("admin-view-count"),"Manual review");return}
  if(!adminData){
   text($("admin-view-count"),"Not loaded");
   output.replaceChildren(element("div","admin-empty","Select Load metadata to inspect PostgreSQL "+section.title.toLowerCase()+"."));
@@ -702,6 +718,98 @@ $("admin-open-sql").onclick=()=>{
  nextTab++;tabs.push(tab);activeTab=tab.id;sql.value=tab.sql;renderTabs();showWorkspace("sql");sql.focus();
  text($("admin-sql-message"),"SQL opened in a separate tab. Nothing has been executed.");
 };
+
+// All import data remains local until the user explicitly runs the reviewed SQL.
+function parseCsv(textValue){
+ const source=textValue.replace(/^\uFEFF/,""),rows=[];
+ let row=[],field="",quoted=false,closedQuote=false;
+ for(let i=0;i<source.length;i++){
+  const ch=source[i];
+  if(quoted){
+   if(ch==='"'){
+    if(source[i+1]==='"'){field+='"';i++}
+    else{quoted=false;closedQuote=true}
+   }else field+=ch;
+  }else if(ch===","){row.push(field);field="";closedQuote=false}
+  else if(ch==="\n"||ch==="\r"){
+   if(ch==="\r"&&source[i+1]==="\n")i++;
+   row.push(field);rows.push(row);row=[];field="";closedQuote=false;
+   if(rows.length>101)throw Error("CSV supports at most 100 data rows");
+  }else if(ch==='"'&&!field&&!closedQuote)quoted=true;
+  else if(ch==='"'||closedQuote)throw Error("Invalid CSV quoting");
+  else field+=ch;
+ }
+ if(quoted)throw Error("CSV contains an unterminated quoted field");
+ if(field||row.length){row.push(field);rows.push(row)}
+ return rows;
+}
+function csvSqlValue(value,emptyAsNull){
+ if(value.includes("\0"))throw Error("CSV cannot contain NUL bytes");
+ if(!value&&emptyAsNull)return "NULL";
+ let suffix=0,tag="$dw$";
+ while(value.includes(tag)){suffix++;tag="$dw"+suffix+"$"}
+ return tag+value+tag; // PostgreSQL dollar-quoted literal: no escaping or interpolation
+}
+let csvPreparedSql="";
+function clearCsvPreview(){
+ csvPreparedSql="";$("admin-csv-open").disabled=true;
+ text($("admin-csv-sql"),"Select a CSV file to preview.");
+ text($("admin-csv-status"),"CSV preview not generated.");
+}
+for(const id of ["admin-csv-schema","admin-csv-table","admin-csv-file","admin-csv-null"])
+ $(""+id).addEventListener("change",clearCsvPreview);
+for(const id of ["admin-csv-schema","admin-csv-table"])
+ $(""+id).addEventListener("input",clearCsvPreview);
+$("admin-csv-preview").onclick=async()=>{
+ clearCsvPreview();
+ text($("admin-csv-status"),"Validating CSV…");
+ const file=$("admin-csv-file").files?.[0];
+ if(!file){text($("admin-csv-status"),"Choose a CSV file.");return}
+ if(file.size>16384){text($("admin-csv-status"),"CSV exceeds 16 KiB.");return}
+ try{
+  const schema=$("admin-csv-schema").value,table=$("admin-csv-table").value;
+  const target=adminIdentifier(schema)+"."+adminIdentifier(table);
+  const content=await file.text();
+  if(new TextEncoder().encode(content).length>16384)throw Error("CSV exceeds 16 KiB");
+  const rows=parseCsv(content);
+  if(rows.length<2)throw Error("CSV must contain a header and at least one row");
+  const headers=rows[0];
+  if(!headers.length||headers.length>20||headers.some(h=>!h)||new Set(headers).size!==headers.length)
+   throw Error("CSV requires 1–20 unique, non-empty column headers");
+  const targetColumns=await api("/api/columns?"+new URLSearchParams({schema,object:table}));
+  if(!Array.isArray(targetColumns)||headers.some(h=>!targetColumns.some(c=>c.name===h)))
+   throw Error("CSV headers must exactly match readable columns of the selected table");
+  const columns=headers.map(adminIdentifier).join(", ");
+  const emptyAsNull=$("admin-csv-null").checked;
+  const data=rows.slice(1);
+  if(data.some(row=>row.length!==headers.length))throw Error("CSV row has a different column count");
+  const statement="INSERT INTO "+target+" ("+columns+") VALUES\n"+
+   data.map(row=>" ("+row.map(value=>csvSqlValue(value,emptyAsNull)).join(", ")+")").join(",\n")+";";
+  if(statement.length>128000)throw Error("Generated SQL exceeds 128 KiB");
+  csvPreparedSql=statement;$("admin-csv-open").disabled=false;
+  text($("admin-csv-sql"),statement.length>2500?statement.slice(0,2500)+"\n… Preview truncated; full SQL opens in the editor.":statement);
+  text($("admin-csv-status"),data.length+" row(s) mapped to "+headers.length+" column(s). Single INSERT, atomic in PostgreSQL. Manual execution only.");
+ }catch(e){text($("admin-csv-status"),e.message)}
+};
+$("admin-csv-open").onclick=()=>{
+ if(!csvPreparedSql||busy)return;
+ persistTab();
+ const tab={id:nextTab,name:"CSV Import "+nextTab,sql:csvPreparedSql};
+ nextTab++;tabs.push(tab);activeTab=tab.id;sql.value=tab.sql;renderTabs();
+ showWorkspace("sql");sql.focus();
+ text($("admin-csv-status"),"Prepared SQL opened. No rows have been imported.");
+};
+$("explain").onclick=()=>{
+ const statement=sql.value.trim().replace(/;+\s*$/,"");
+ if(!statement||statement.length>20000||statement.includes("\0")){
+  status("Invalid EXPLAIN input","warning");info("Enter one SQL statement up to 20 KiB.");return;
+ }
+ persistTab();
+ const tab={id:nextTab,name:"EXPLAIN "+nextTab,sql:"EXPLAIN (FORMAT JSON) "+statement+";"};
+ nextTab++;tabs.push(tab);activeTab=tab.id;sql.value=tab.sql;renderTabs();sql.focus();
+ info("EXPLAIN was prepared in a new tab. Nothing has executed; EXPLAIN without ANALYZE does not run the query.");
+};
+
 loadObjects();
 </script>
 </body></html>

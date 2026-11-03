@@ -181,6 +181,23 @@ the original local development default. Use TLS for external DB hosts.
 Connection switching, session isolation, SSH tunneling and user-specific DB
 permissions remain outside this first security increment.
 
+## Bounded CSV import and EXPLAIN preview
+
+Administration → Tools → **CSV import preview** reads a UTF-8 CSV locally (maximum
+16 KiB, 100 data rows and 20 columns), matches its header to readable PostgreSQL
+table columns, and generates **one atomic INSERT statement** for manual review.
+Identifiers and values are safely quoted. Empty strings remain empty by
+default, with explicit opt-in for SQL NULL. Import does not execute or upload
+anything until **Run query** is clicked in the SQL console. This initial tool
+does not perform arbitrary-sized bulk loading, background jobs, schema
+migration, or automatic backup/restore.
+
+Use **Explain SQL** in the SQL console to prepare `EXPLAIN (FORMAT JSON)` in
+a separate tab. The plan is not requested until you explicitly click Run query.
+The tool deliberately does not use `ANALYZE`, because that would actually
+execute the underlying statement. Full plan visualization and safe native
+`pg_dump`/`pg_restore` workflows remain in #65.
+
 ## Configuration
 
 | Environment | Default | Purpose |
