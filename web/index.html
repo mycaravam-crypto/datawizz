@@ -190,8 +190,8 @@
 <label class="table-control value" for="table-filter-value">Contains (literal text)<input id="table-filter-value" class="input" type="search" maxlength="200" placeholder="Search across all DB rows"></label>
 <label class="table-control" for="table-sort-column">Sort by<select id="table-sort-column" class="input" disabled><option value="">Primary key</option></select></label>
 <label class="table-control" for="table-sort-dir">Direction<select id="table-sort-dir" class="input"><option value="asc">Ascending</option><option value="desc">Descending</option></select></label>
-<div class="buttons"><button id="table-apply" class="btn small primary" type="button">Apply to database</button><button id="table-reset" class="btn small" type="button">Reset</button><button id="table-export" class="btn small" type="button" disabled>Export filtered CSV</button></div>
-<p class="note">Filters match literal text case-insensitively. Sort is database-side with PK tie-breakers. Export is limited to 1,000 rows / 2 MiB and is not a consistent snapshot across requests.</p>
+<div class="buttons"><button id="table-apply" class="btn small primary" type="button">Apply to database</button><button id="table-reset" class="btn small" type="button">Reset</button><button id="table-export" class="btn small" type="button" disabled>Export filtered CSV</button><button id="table-export-cancel" class="btn small" type="button" hidden>Cancel export</button></div>
+<p class="note">Filters match literal text case-insensitively. Sort is database-side with PK tie-breakers. Export uses one PostgreSQL snapshot, up to 10,000 rows / 10 MiB; server rejects larger downloads without truncation. Staged edits are excluded.</p>
 </div>
 <div id="selection-bar" class="selection-bar" hidden><span id="selection-count" class="stat">0 selected</span><label class="note" for="bulk-column">Column</label><select id="bulk-column" class="input" style="width:auto"></select><input id="bulk-value" aria-label="Value for selected rows" class="input" style="width:180px" placeholder="New value"><label class="note"><input type="checkbox" id="bulk-null"> SQL NULL</label><button type="button" class="btn small" id="bulk-apply">Apply to selected</button><button type="button" class="btn small" id="bulk-clear">Clear selection</button><span class="note">Up to 20 rows · staged and saved atomically</span></div><div id="output" class="results-content" role="region" aria-label="SQL results table" tabindex="0" aria-live="off"><div class="empty"><strong>No results yet</strong><span>Run a statement or choose a table from the explorer.</span></div></div>
 <div id="server-pager" class="server-pager" hidden><button class="btn small" id="server-prev" type="button">← Previous 100</button><span id="server-page-info" class="note"></span><button class="btn small" id="server-next" type="button">Next 100 →</button></div><div class="footer"><span id="result-note" class="note">Only loaded rows can be exported.</span><div class="buttons"><button id="prev" class="btn small" type="button" disabled>← Previous</button><span id="page" class="note">Page —</span><button id="next" class="btn small" type="button" disabled>Next →</button></div></div></section>
@@ -697,36 +697,67 @@ $("table-reset").onclick=()=>{
  $("table-sort-column").value="";$("table-sort-dir").value="asc";
  browseRows(true,{filterColumn:"",filter:"",sortColumn:"",sortDir:"asc"});
 };
+// Authenticated, profile-scoped binary download. Never persist bearer tokens in URLs.
+async function apiCsv(path,signal){
+ const headers=new Headers();
+ if(accessToken)headers.set("Authorization","Bearer "+accessToken);
+ const profileAtRequest=activeProfileId;
+ const target=activeProfileId==="default"?path:"/profiles/"+activeProfileId+path;
+ const response=await fetch(target,{headers,signal,cache:"no-store"});
+ if(profileAtRequest!==activeProfileId)throw Error("Discarded response from previous connection");
+ if(response.status===401){$("auth-area").hidden=false;accessToken=""}
+ if(!response.ok){
+  let detail="";
+  if((response.headers.get("content-type")||"").includes("application/json")){
+   try{detail=(await response.json()).error||""}catch{}
+  }
+  const error=Error(detail||"CSV export failed (HTTP "+response.status+")");
+  error.status=response.status;throw error;
+ }
+ if(!(response.headers.get("content-type")||"").toLowerCase().startsWith("text/csv"))
+  throw Error("CSV export returned an unexpected content type");
+ const blob=await response.blob();
+ if(blob.size>10*1024*1024)throw Error("CSV export exceeded the permitted download size");
+ return blob;
+}
+let activeExportController=null;
+$("table-export-cancel").onclick=()=>activeExportController?.abort();
 $("table-export").onclick=async()=>{
  if(!selected||!tableMode||busy)return;
  if(changes.size&&!confirm("Export database data without the locally staged edits?"))return;
- const item={schema:selected.schema,name:selected.name};
- const query={...activeTableQuery},ticket=tableRequest,limit=200;
- let offset=0,columns=null,records=[],bytes=0,ended=false;
- busy=true;$("table-export").disabled=true;status("Exporting","running");
+ const item={schema:selected.schema,name:selected.name},ticket=tableRequest;
+ const params=new URLSearchParams({schema:item.schema,table:item.name});
+ if(activeTableQuery.filter&&activeTableQuery.filterColumn){
+  params.set("filter_column",activeTableQuery.filterColumn);params.set("filter",activeTableQuery.filter);
+ }
+ if(activeTableQuery.sortColumn){
+  params.set("sort_column",activeTableQuery.sortColumn);
+  params.set("sort_dir",activeTableQuery.sortDir);
+ }
+ const controller=new AbortController();
+ activeExportController=controller;
+ busy=true;$("table-export").disabled=true;$("table-export-cancel").hidden=false;
+ status("Exporting","running");info("Preparing a snapshot-consistent CSV download…");
  try{
-  while(offset<1000){
-   const data=await api("/api/table-rows?"+tableQueryParams(item,offset,limit,query));
-   if(ticket!==tableRequest||selected?.name!==item.name||selected?.schema!==item.schema)
-    throw Error("Export cancelled after changing table");
-   if(!columns)columns=data.columns;
-   else if(JSON.stringify(columns)!==JSON.stringify(data.columns))throw Error("Table columns changed during export");
-   if(offset>0&&!data.stable_order)throw Error("Export needs a primary key for multiple pages");
-   records.push(...data.rows);
-   bytes=new TextEncoder().encode([columns,...records].map(row=>row.map(csvValue).join(",")).join("\r\n")).length;
-   if(bytes>2_000_000)throw Error("Filtered export exceeds 2 MiB; narrow the filter");
-   offset+=data.rows.length;
-   if(!data.has_next){ended=true;break}
-   if(!data.rows.length)throw Error("Database returned an empty page before export ended");
-  }
-  if(!ended)throw Error("Filtered export exceeds 1,000 rows; narrow the filter");
-  const body="\uFEFF"+[columns,...records].map(row=>row.map(csvValue).join(",")).join("\r\n");
-  const blob=new Blob([body],{type:"text/csv;charset=utf-8"}),url=URL.createObjectURL(blob),link=document.createElement("a");
-  link.href=url;link.download="datawizz-filtered-table.csv";document.body.append(link);link.click();link.remove();
+  const blob=await apiCsv("/api/table-export?"+params,controller.signal);
+  if(ticket!==tableRequest||selected?.name!==item.name||selected?.schema!==item.schema)
+   throw Error("Export cancelled after changing table");
+  if(controller.signal.aborted)throw Error("Export cancelled");
+  const url=URL.createObjectURL(blob),link=document.createElement("a");
+  link.href=url;link.download="datawizz-filtered-table.csv";
+  document.body.append(link);link.click();link.remove();
   setTimeout(()=>URL.revokeObjectURL(url),1000);
-  status("Exported","success");info("Exported "+records.length+" database rows (no pending local edits).");
- }catch(e){status("Export failed","warning");info(e.message)}
- finally{busy=false;$("table-export").disabled=!selected||!tableMode}
+  status("Exported","success");
+  info("Exported database CSV from a consistent snapshot (up to 10,000 rows / 10 MiB; no staged edits).");
+ }catch(e){
+  status("Export not completed","warning");
+  info(controller.signal.aborted?"Export cancelled; no file downloaded.":e.message);
+ }finally{
+  if(activeExportController===controller)activeExportController=null;
+  $("table-export-cancel").hidden=true;
+  busy=false;
+  $("table-export").disabled=!selected||!tableMode;
+ }
 };
 async function selectObject(item){if(changes.size&&!confirm("Discard staged changes and change table?"))return;changes.clear();resetEditHistory();updateChanges();resetSelection();editMode=false;++tableRequest;tablePage=null;$("server-pager").hidden=true;last=null;output.replaceChildren();$("csv").disabled=true;selected=item;$("insert").disabled=item.kind!=="table";selectedColumns=[];tableMode=false;tableHasNext=false;activeTableQuery={filterColumn:"",filter:"",sortColumn:"",sortDir:"asc"};
  $("table-server-controls").hidden=false;$("table-filter-value").value="";$("table-sort-dir").value="asc";setTableFilterColumns([]);$("table-export").disabled=true;$("browse-table").disabled=false;$("browse").disabled=false;updateSelection();renderObjects();text($("selected"),item.schema+"."+item.name);sql.value="SELECT * FROM "+quoted(item.schema)+"."+quoted(item.name)+" LIMIT 200;";persistTab();sql.focus();const ticket=++requestId;text($("columns"),"Loading columns…");try{const cols=await api("/api/columns?"+new URLSearchParams({schema:item.schema,object:item.name}));if(ticket!==requestId)return;selectedColumns=cols;setTableFilterColumns(cols);$("columns").replaceChildren();for(const c of cols){const row=element("div","column-item");row.append(element("strong","",c.name),document.createTextNode(c.data_type+(c.nullable?" · nullable":" · required")+(c.primary_key?" · PRIMARY KEY":"")));$("columns").append(row)}if(!cols.length)text($("columns"),"No columns visible.")}catch(e){if(ticket===requestId)text($("columns"),e.message)}}

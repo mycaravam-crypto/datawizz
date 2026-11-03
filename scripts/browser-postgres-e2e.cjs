@@ -189,13 +189,30 @@ const { chromium } = require("playwright");
     await page.locator("#table-export").click();
     await page.waitForFunction(() => !busy);
     const exportMessage=await page.locator("#message").textContent();
-    assert.match(exportMessage,/Exported [0-9]+ database rows/,
+    assert.match(exportMessage,/Exported database CSV from a consistent snapshot/,
       "Export did not finish: "+exportMessage);
     const download=await downloading;
     assert(download,"Export reported success but no browser download was emitted: "+exportMessage);
     assert.equal(download.suggestedFilename(),"datawizz-filtered-table.csv");
     const fs=require("node:fs");
     assert(fs.readFileSync(await download.path(),"utf8").includes("after-dialog"));
+    // API download is authenticated, rejects injected identifiers and returns CSV.
+    const exportApi="http://127.0.0.1:3188/api/table-export?";
+    const exportParams=new URLSearchParams({
+      schema:"public",table:"datawizz_browser_e2e",
+      filter_column:"label",filter:"after-dialog",sort_column:"id",sort_dir:"asc"
+    });
+    const serverExport=await page.request.get(exportApi+exportParams,{headers:tokenHeaders});
+    assert.equal(serverExport.status(),200);
+    assert.match(serverExport.headers()["content-type"],/^text\/csv/);
+    assert((await serverExport.text()).includes("after-dialog"));
+    const deniedExport=await page.request.get(exportApi+exportParams);
+    assert.equal(deniedExport.status(),401);
+    const injectedExport=await page.request.get(exportApi+new URLSearchParams({
+      schema:"public",table:"datawizz_browser_e2e",
+      filter_column:"id); DROP TABLE x; --",filter:"1"
+    }),{headers:tokenHeaders});
+    assert.equal(injectedExport.status(),400);
     await page.locator("#table-reset").click();
     await page.locator("#output").getByText("after-dialog",{exact:true}).waitFor();
     // Two physical databases: routes are isolated even with the same bearer token.
@@ -210,6 +227,12 @@ const { chromium } = require("playwright");
     const sandbox=await page.request.get(base+"/profiles/sandbox/api/connection-status",{headers});
     assert.equal(sandbox.status(),200);
     assert.equal((await sandbox.json()).database,"datawizz_profile_test");
+    const sandboxExport=await page.request.get(base+"/profiles/sandbox/api/table-export?"+
+      new URLSearchParams({schema:"public",table:"profile_only"}),{headers});
+    assert.equal(sandboxExport.status(),200,"Read-only profiles may export");
+    const sandboxCsv=await sandboxExport.text();
+    assert(sandboxCsv.includes("sandbox-only"));
+    assert(!sandboxCsv.includes("after-dialog"),"Export must not cross database profiles");
     const otherObjects=await page.request.get(base+"/profiles/sandbox/api/schema",{headers});
     assert.equal(otherObjects.status(),200);
     const inSandbox=await otherObjects.json();
