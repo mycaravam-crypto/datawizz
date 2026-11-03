@@ -22,6 +22,14 @@ const server = http.createServer(async (req, res) => {
       indexes:[{schema:"public",table:"demo",name:"demo_idx",valid:true,scans:0,definition:"CREATE INDEX demo_idx ON public.demo USING btree (id)"}],
       constraints:[],table_stats:[],locks:[],settings:[],privileges:[],routines:[]
     }));
+  } else if (req.url === "/api/connections") {
+    res.end(JSON.stringify([{id:"default",label:"Default PostgreSQL",engine:"postgresql",environment:"dev",read_only:false}]));
+  } else if (req.url === "/api/connection-status") {
+    res.end(JSON.stringify({database:"test",role:"test",read_only:false}));
+  } else if (req.url === "/api/relationships") {
+    res.end(JSON.stringify([{from_schema:"public",from_table:"demo",to_schema:"public",
+      to_table:"other",constraint:'fk_<img src=x onerror=alert(1)>',
+      definition:"FOREIGN KEY (other_id) REFERENCES other(id)"}]));
   } else if (req.url === "/api/schema") {
     res.end(JSON.stringify([{schema:"public",name:"demo",kind:"table"},{schema:"public",name:"other",kind:"table"}]));
   } else if (req.url.startsWith("/api/columns")) {
@@ -255,7 +263,7 @@ const server = http.createServer(async (req, res) => {
     assert.equal(await page.locator("#admin-workspace").isVisible(),true);
     await page.locator("#admin-refresh").click();
     await page.locator("#admin-output .grid").waitFor();
-    assert.equal(await page.locator("#admin-nav .admin-tree-button").count(),16);
+    assert.equal(await page.locator("#admin-nav .admin-tree-button").count(),17);
     assert.equal(await page.locator("#admin-output .grid").count(),1,"Only the selected catalog must be visible");
     await page.locator("#admin-nav-roles").click();
     await page.locator("#admin-output").getByText("<img src=x onerror=alert(1)>").waitFor();
@@ -481,6 +489,17 @@ const server = http.createServer(async (req, res) => {
     await page.locator("#message").getByText(/exceeds 1,000 rows/).waitFor();
     await page.locator("#table-reset").click();
     await page.locator("#output").getByText("original",{exact:true}).waitFor();
+    // Read-only ER overview remains text-only for untrusted PostgreSQL names.
+    await page.locator("#workspace-tab-admin").click();
+    await page.locator("#admin-er-nav").click();
+    await page.locator("#er-accessible tbody tr").first().waitFor();
+    assert.equal(await page.locator("#er-diagram svg").count(),1);
+    assert.match(await page.locator("#er-status").textContent(),/1 relationships/);
+    assert.equal(await page.locator("#er-accessible img").count(),0);
+    assert.equal(await page.locator("#er-diagram img").count(),0);
+    assert.match(await page.locator("#er-accessible").textContent(),/fk_<img src=x onerror=alert\(1\)>/);
+    assert.equal(await page.locator("#connection-chooser").isDisabled(),true,
+      "Single-profile default preserves the no-switch behavior");
     console.log("Chromium workbench UI smoke tests passed");
   } finally {await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1}).finally(()=>server.close());

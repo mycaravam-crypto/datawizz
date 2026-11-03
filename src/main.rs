@@ -22,6 +22,8 @@ struct AppState {
     timeout_ms: u64,
     tls: Option<Arc<TlsConnector>>,
     access_token: Option<Arc<String>>,
+    read_only: bool,
+    profiles: Arc<Vec<ConnectionOption>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -67,6 +69,12 @@ async fn connect(state: &AppState) -> Result<tokio_postgres::Client, (StatusCode
     };
     client.batch_execute(&format!("SET statement_timeout = {}", state.timeout_ms))
         .await.map_err(|_| api_error(StatusCode::BAD_GATEWAY, "Could not configure query timeout"))?;
+    // A server-selected read-only transaction is defense in depth for a profile.
+    // The PostgreSQL role must independently be restricted for production use.
+    if state.read_only {
+        client.batch_execute("BEGIN READ ONLY").await
+            .map_err(|_| api_error(StatusCode::BAD_GATEWAY, "Cannot start read-only transaction"))?;
+    }
     Ok(client)
 }
 
@@ -114,16 +122,101 @@ fn verified_pg_tls(mode: &str, ca_path: Option<&str>) -> Result<Option<Arc<TlsCo
     }
 }
 
-#[derive(Serialize)]
-struct ConnectionOption { id: String, label: String, engine: String }
+#[derive(Debug, Clone, Serialize)]
+struct ConnectionOption {
+    id: String,
+    label: String,
+    engine: String,
+    environment: String,
+    read_only: bool,
+}
 
-// The first increment exposes only the configured default connection, never its DSN.
-async fn connections() -> Json<Vec<ConnectionOption>> {
-    Json(vec![ConnectionOption {
-        id: "default".into(),
-        label: "Default PostgreSQL".into(),
-        engine: "postgresql".into(),
-    }])
+#[derive(Deserialize)]
+struct ExtraProfile {
+    id: String,
+    label: String,
+    url: String,
+    environment: String,
+    #[serde(default = "default_read_only")]
+    read_only: bool,
+    tls: Option<String>,
+    ca_file: Option<String>,
+}
+fn default_read_only() -> bool { true }
+
+fn configured_profiles(raw: &str) -> Result<Vec<ExtraProfile>, String> {
+    let profiles: Vec<ExtraProfile> = serde_json::from_str(raw)
+        .map_err(|_| "DATABASE_PROFILES_JSON must be an array of connection profiles")?;
+    if profiles.len() > 7 { return Err("Maximum 7 additional profiles".into()); }
+    let mut ids = std::collections::HashSet::new();
+    for p in &profiles {
+        if p.id.is_empty() || p.id.len() > 32
+            || !p.id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
+            || p.id == "default" || !ids.insert(p.id.clone())
+        { return Err("Profile ids must be unique, lowercase a-z/0-9/-/_ and not 'default'".into()); }
+        if p.label.is_empty() || p.label.len() > 64 || !p.label.chars().all(|c| !c.is_control())
+            || p.label.contains("://") || p.label.contains('@')
+        { return Err("Profile labels must not contain credentials or control characters".into()); }
+        if !matches!(p.environment.as_str(), "dev" | "test" | "prod") {
+            return Err("Profile environment must be dev, test, or prod".into());
+        }
+        if p.url.is_empty() || p.url.len() > 4096 {
+            return Err("Profile URL must be 1..4096 characters".into());
+        }
+        if p.environment == "prod" && (!p.read_only || p.tls.as_deref() != Some("verify-full")) {
+            return Err("Production profiles require read_only=true and tls=verify-full".into());
+        }
+    }
+    Ok(profiles)
+}
+
+async fn connections(State(state): State<AppState>) -> Json<Vec<ConnectionOption>> {
+    Json((*state.profiles).clone())
+}
+
+#[derive(Serialize)]
+struct ConnectionStatus { database: String, role: String, read_only: bool }
+async fn connection_status(State(state): State<AppState>) -> ApiResult<ConnectionStatus> {
+    let client = connect(&state).await?;
+    let row = client.query_one("SELECT current_database()::text, current_user::text", &[])
+        .await.map_err(|_| connection_error())?;
+    Ok(Json(ConnectionStatus {
+        database: row.get(0), role: row.get(1), read_only: state.read_only,
+    }))
+}
+
+#[derive(Serialize)]
+struct Relationship {
+    from_schema: String,
+    from_table: String,
+    to_schema: String,
+    to_table: String,
+    constraint: String,
+    definition: String,
+}
+async fn relationships(State(state): State<AppState>) -> ApiResult<Vec<Relationship>> {
+    let client = connect(&state).await?;
+    let rows = client.query(
+        "SELECT ns.nspname::text, src.relname::text, nt.nspname::text,
+                dst.relname::text, c.conname::text, pg_catalog.pg_get_constraintdef(c.oid)::text
+         FROM pg_catalog.pg_constraint c
+         JOIN pg_catalog.pg_class src ON src.oid=c.conrelid
+         JOIN pg_catalog.pg_namespace ns ON ns.oid=src.relnamespace
+         JOIN pg_catalog.pg_class dst ON dst.oid=c.confrelid
+         JOIN pg_catalog.pg_namespace nt ON nt.oid=dst.relnamespace
+         WHERE c.contype='f'
+           AND has_schema_privilege(ns.oid,'USAGE')
+           AND has_schema_privilege(nt.oid,'USAGE')
+           AND has_table_privilege(src.oid,'SELECT')
+           AND has_table_privilege(dst.oid,'SELECT')
+         ORDER BY ns.nspname, src.relname, c.conname LIMIT 80",
+        &[]
+    ).await.map_err(|e| postgres_error(&e))?;
+    Ok(Json(rows.iter().map(|r| Relationship {
+        from_schema: r.get(0), from_table: r.get(1),
+        to_schema: r.get(2), to_table: r.get(3),
+        constraint: r.get(4), definition: r.get(5),
+    }).collect()))
 }
 
 #[derive(Serialize)]
@@ -405,6 +498,7 @@ struct RowChange {
 struct ChangeResult { affected: u64 }
 
 async fn change_row(State(state): State<AppState>, Json(req): Json<RowChange>) -> ApiResult<ChangeResult> {
+    if state.read_only { return Err(api_error(StatusCode::FORBIDDEN, "Read-only profile")); }
     let mut client = connect(&state).await?;
     // Only base/partitioned tables, never views, foreign tables or relations without a PK.
     let relation = client.query_opt(
@@ -499,6 +593,7 @@ async fn apply_changeset(
     State(state): State<AppState>,
     Json(req): Json<ChangesetRequest>,
 ) -> ApiResult<ChangeResult> {
+    if state.read_only { return Err(api_error(StatusCode::FORBIDDEN, "Read-only profile")); }
     if req.changes.is_empty() || req.changes.len() > 20 {
         return Err(api_error(StatusCode::BAD_REQUEST, "Changeset must contain 1 to 20 rows"));
     }
@@ -580,6 +675,7 @@ struct InsertField {
 struct InsertRow { schema: String, table: String, fields: Vec<InsertField> }
 
 async fn insert_row(State(state): State<AppState>, Json(req): Json<InsertRow>) -> ApiResult<ChangeResult> {
+    if state.read_only { return Err(api_error(StatusCode::FORBIDDEN, "Read-only profile")); }
     let client=connect(&state).await?;
     let relation=client.query_opt(
         "SELECT c.oid,n.nspname,c.relname FROM pg_catalog.pg_class c
@@ -961,6 +1057,23 @@ async fn index() -> impl IntoResponse {
     ([(header::CACHE_CONTROL, "no-store")], Html(include_str!("../web/index.html")))
 }
 
+fn api_routes(state: AppState) -> Router {
+    Router::new()
+        .route("/api/connections", get(connections))
+        .route("/api/connection-status", get(connection_status))
+        .route("/api/relationships", get(relationships))
+        .route("/api/schema", get(schema))
+        .route("/api/admin", get(admin_overview))
+        .route("/api/columns", get(columns))
+        .route("/api/query", post(execute))
+        .route("/api/table-rows", get(table_rows))
+        .route("/api/row-change", post(change_row))
+        .route("/api/changeset", post(apply_changeset))
+        .route("/api/row-insert", post(insert_row))
+        .route_layer(middleware::from_fn_with_state(state.clone(), require_access_token))
+        .with_state(state)
+}
+
 #[tokio::main]
 async fn main() {
     let url = env::var("DATABASE_URL").expect("DATABASE_URL is required");
@@ -977,24 +1090,38 @@ async fn main() {
             "DATAWIZZ_ACCESS_TOKEN must contain 32..4096 characters");
         Arc::new(value)
     });
-    let state = AppState { url: Arc::new(url), max_rows, timeout_ms, tls, access_token };
-    // Fail fast before accepting browser traffic.
+    // Credentials remain on the server; profile routes bind one immutable AppState.
+    let extras = configured_profiles(&env::var("DATABASE_PROFILES_JSON")
+        .unwrap_or_else(|_| "[]".into())).expect("Invalid profile configuration");
+    assert!(extras.is_empty() || access_token.is_some(),
+        "DATAWIZZ_ACCESS_TOKEN is mandatory when additional profiles are configured");
+    let mut visible = vec![ConnectionOption {
+        id: "default".into(), label: "Default PostgreSQL".into(),
+        engine: "postgresql".into(), environment: "dev".into(), read_only: false,
+    }];
+    visible.extend(extras.iter().map(|p| ConnectionOption {
+        id: p.id.clone(), label: p.label.clone(), engine: "postgresql".into(),
+        environment: p.environment.clone(), read_only: p.read_only,
+    }));
+    let profiles = Arc::new(visible);
+    let state = AppState { url: Arc::new(url), max_rows, timeout_ms, tls,
+        access_token: access_token.clone(), read_only: false, profiles: profiles.clone() };
+    // Preserve the existing fail-fast check for the default PostgreSQL connection.
     connect(&state).await.expect("Cannot connect to PostgreSQL");
-    let api = Router::new()
-        .route("/api/connections", get(connections))
-        .route("/api/schema", get(schema))
-        .route("/api/admin", get(admin_overview))
-        .route("/api/columns", get(columns))
-        .route("/api/query", post(execute))
-        .route("/api/table-rows", get(table_rows))
-        .route("/api/row-change", post(change_row))
-        .route("/api/changeset", post(apply_changeset))
-        .route("/api/row-insert", post(insert_row))
-        .route_layer(middleware::from_fn_with_state(state.clone(), require_access_token));
-    let app = Router::new()
-        .route("/", get(index))
-        .merge(api)
-        .with_state(state);
+    let mut app = Router::new().route("/", get(index)).merge(api_routes(state));
+    for profile in extras {
+        let tls_mode = profile.tls.as_deref().unwrap_or("disable");
+        let tls = verified_pg_tls(tls_mode, profile.ca_file.as_deref())
+            .expect("Invalid TLS setting in DATABASE_PROFILES_JSON");
+        let profile_state = AppState {
+            url: Arc::new(profile.url), max_rows, timeout_ms, tls,
+            access_token: access_token.clone(), read_only: profile.read_only,
+            profiles: profiles.clone(),
+        };
+        // A static path prefix selects the server-side DB. No client DSN or
+        // mutable global "current database" that could cross user requests.
+        app = app.nest(&format!("/profiles/{}", profile.id), api_routes(profile_state));
+    }
     let host = env::var("HOST").unwrap_or_else(|_| "127.0.0.1".into());
     let address = format!("{host}:{port}");
     let listener = tokio::net::TcpListener::bind(&address).await.expect("Cannot bind port");
@@ -1025,9 +1152,55 @@ mod tests {
         assert!(verified_pg_tls("verify-full", None).unwrap().is_some());
     }
 
+    #[test]
+    fn profile_config_rejects_unsafe_names_duplicates_and_prod_writes() {
+        assert!(configured_profiles("[]").unwrap().is_empty());
+        assert!(configured_profiles(r#"[{"id":"qa","label":"QA","url":"postgres://u:secret@db/q","environment":"test"}]"#).is_ok());
+        for raw in [
+            r#"[{"id":"../unsafe","label":"QA","url":"db","environment":"test"}]"#,
+            r#"[{"id":"default","label":"QA","url":"db","environment":"test"}]"#,
+            r#"[{"id":"qa","label":"QA","url":"db","environment":"test"},{"id":"qa","label":"Q2","url":"db","environment":"test"}]"#,
+            r#"[{"id":"prod","label":"Prod","url":"db","environment":"prod","read_only":false,"tls":"verify-full"}]"#,
+            r#"[{"id":"prod","label":"Prod","url":"db","environment":"prod"}]"#,
+            r#"[{"id":"qa","label":"postgres://user:password@db","url":"db","environment":"test"}]"#,
+        ] {
+            assert!(configured_profiles(raw).is_err(), "unsafe profile config accepted");
+        }
+        let safe = configured_profiles(r#"[{"id":"prod","label":"Production","url":"db","environment":"prod","tls":"verify-full"}]"#).unwrap();
+        assert!(safe[0].read_only);
+    }
+
+    #[tokio::test]
+    async fn relationships_are_read_only_and_catalog_visibility_limited() {
+        let state=test_state(200,10_000).expect("test state");
+        let client=connect(&state).await.expect("connect");
+        client.batch_execute(
+            "CREATE TABLE public.datawizz_er_parent (id integer PRIMARY KEY);
+             CREATE TABLE public.datawizz_er_child
+                 (id integer PRIMARY KEY, parent integer REFERENCES public.datawizz_er_parent(id));"
+        ).await.expect("create fk fixture");
+        let Json(edges)=relationships(State(state.clone())).await.expect("load fk edges");
+        let edge=edges.iter().find(|r|r.from_table=="datawizz_er_child")
+            .expect("FK must be discoverable");
+        assert_eq!(edge.to_table,"datawizz_er_parent");
+        assert!(edge.definition.contains("FOREIGN KEY"));
+        client.batch_execute("DROP TABLE public.datawizz_er_child;
+                              DROP TABLE public.datawizz_er_parent").await.expect("cleanup");
+        let mut limited=state;
+        limited.read_only=true;
+        assert!(connect(&limited).await.expect("read-only connection")
+            .batch_execute("CREATE TABLE public.datawizz_er_forbidden (id integer)")
+            .await.is_err());
+        let Err((status,_))=insert_row(State(limited),Json(InsertRow {
+            schema:"public".into(),table:"missing".into(),fields:vec![],
+        })).await else { panic!("Read-only profile must reject INSERT"); };
+        assert_eq!(status,StatusCode::FORBIDDEN);
+    }
+
     #[tokio::test]
     async fn connection_options_do_not_expose_credentials() {
-        let Json(profiles) = connections().await;
+        let state = test_state(200, 10_000).expect("test PostgreSQL state");
+        let Json(profiles) = connections(State(state)).await;
         assert_eq!(profiles.len(), 1);
         assert_eq!(profiles[0].id, "default");
         let body = serde_json::to_string(&profiles).expect("serialize options");
@@ -1103,6 +1276,11 @@ mod tests {
             timeout_ms,
             tls: None,
             access_token: None,
+            read_only: false,
+            profiles: Arc::new(vec![ConnectionOption {
+                id: "default".into(), label: "Default PostgreSQL".into(),
+                engine: "postgresql".into(), environment: "dev".into(), read_only: false,
+            }]),
         })
     }
 
