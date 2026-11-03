@@ -182,6 +182,18 @@ jobs:
           exit 1
       - name: Restricted HTTP credential E2E
         run: node scripts/restricted-http-e2e.cjs
+      - name: Invalid PostgreSQL TLS configuration fails closed
+        run: |
+          if DATABASE_TLS=verify-full DATABASE_TLS_CA_FILE=/nonexistent/datawizz-ca.pem \
+            PORT=3190 cargo run > /tmp/datawizz-invalid-tls.log 2>&1; then
+            echo "Expected TLS configuration to fail" >&2
+            exit 1
+          fi
+          grep -q "Invalid PostgreSQL TLS configuration" /tmp/datawizz-invalid-tls.log
+          if grep -Eq "postgres://|test_only_password|reader_test_password" /tmp/datawizz-invalid-tls.log; then
+            echo "Sensitive connection material leaked in startup error" >&2
+            exit 1
+          fi
       - name: Log application diagnostics on failure
         if: failure()
         run: cat /tmp/datawizz-e2e.log || true
