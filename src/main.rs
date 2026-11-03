@@ -1,8 +1,9 @@
 use std::{env, sync::Arc, time::Instant};
 
 use axum::{
-    extract::{Query, State},
+    extract::{Query, Request, State},
     http::{header, StatusCode},
+    middleware::{self, Next},
     response::{Html, IntoResponse},
     routing::{get, post},
     Json, Router,
@@ -10,12 +11,17 @@ use axum::{
 use futures_util::TryStreamExt;
 use serde::{Deserialize, Serialize};
 use tokio_postgres::{NoTls, SimpleQueryMessage};
+use native_tls::{Certificate, TlsConnector};
+use postgres_native_tls::MakeTlsConnector;
+use subtle::ConstantTimeEq;
 
 #[derive(Clone)]
 struct AppState {
     url: Arc<String>,
     max_rows: usize,
     timeout_ms: u64,
+    tls: Option<Arc<TlsConnector>>,
+    access_token: Option<Arc<String>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -40,25 +46,72 @@ fn postgres_error(error: &tokio_postgres::Error) -> (StatusCode, Json<ApiError>)
     api_error(StatusCode::BAD_REQUEST, format!("PostgreSQL query failed (SQLSTATE: {code})"))
 }
 
+// Keep database credentials and TLS diagnostics out of HTTP responses and logs.
+fn connection_error() -> (StatusCode, Json<ApiError>) {
+    api_error(StatusCode::BAD_GATEWAY, "PostgreSQL connection failed")
+}
+
 async fn connect(state: &AppState) -> Result<tokio_postgres::Client, (StatusCode, Json<ApiError>)> {
-    // The initial MVP uses one short-lived DB connection per HTTP request.
-    // No cross-user session state or connection-pool complexity.
-    let (client, connection) = tokio_postgres::connect(&state.url, NoTls)
-        .await
-        .map_err(|error| {
-            eprintln!("PostgreSQL connection failed: {error}");
-            api_error(StatusCode::BAD_GATEWAY, "PostgreSQL connection failed")
-        })?;
-    tokio::spawn(async move {
-        if let Err(error) = connection.await {
-            eprintln!("PostgreSQL connection closed: {error}");
-        }
-    });
-    client
-        .batch_execute(&format!("SET statement_timeout = {}", state.timeout_ms))
-        .await
-        .map_err(|_| api_error(StatusCode::BAD_GATEWAY, "Could not configure query timeout"))?;
+    // Per-request PostgreSQL connection; use verified TLS when explicitly configured.
+    let client = if let Some(tls) = &state.tls {
+        let (client, connection) = tokio_postgres::connect(
+            &state.url, MakeTlsConnector::new((**tls).clone())
+        ).await.map_err(|_| connection_error())?;
+        tokio::spawn(async move { let _ = connection.await; });
+        client
+    } else {
+        let (client, connection) = tokio_postgres::connect(&state.url, NoTls)
+            .await.map_err(|_| connection_error())?;
+        tokio::spawn(async move { let _ = connection.await; });
+        client
+    };
+    client.batch_execute(&format!("SET statement_timeout = {}", state.timeout_ms))
+        .await.map_err(|_| api_error(StatusCode::BAD_GATEWAY, "Could not configure query timeout"))?;
     Ok(client)
+}
+
+// A bearer header is explicit, unlike browser cookies; no ambient session for CSRF.
+fn authorized(expected: Option<&str>, authorization: Option<&str>) -> bool {
+    match expected {
+        None => true, // local single-user deployment remains backward compatible
+        Some(secret) => {
+            let Some(provided) = authorization.and_then(|v| v.strip_prefix("Bearer ")) else {
+                return false;
+            };
+            bool::from(provided.as_bytes().ct_eq(secret.as_bytes()))
+        }
+    }
+}
+
+async fn require_access_token(
+    State(state): State<AppState>, request: Request, next: Next,
+) -> impl IntoResponse {
+    let token = request.headers().get(header::AUTHORIZATION).and_then(|v| v.to_str().ok());
+    if !authorized(state.access_token.as_deref().map(String::as_str), token) {
+        return api_error(StatusCode::UNAUTHORIZED, "Authentication required").into_response();
+    }
+    next.run(request).await
+}
+
+fn verified_pg_tls(mode: &str, ca_path: Option<&str>) -> Result<Option<Arc<TlsConnector>>, String> {
+    match mode {
+        "disable" => {
+            if ca_path.is_some() { return Err("DATABASE_TLS_CA_FILE requires DATABASE_TLS=verify-full".into()); }
+            Ok(None)
+        }
+        "verify-full" => {
+            let mut builder = TlsConnector::builder();
+            if let Some(path) = ca_path {
+                let pem = std::fs::read(path).map_err(|_| "Cannot load DATABASE_TLS_CA_FILE")?;
+                let certificate = Certificate::from_pem(&pem)
+                    .map_err(|_| "Invalid DATABASE_TLS_CA_FILE certificate")?;
+                builder.add_root_certificate(certificate);
+            }
+            let connector = builder.build().map_err(|_| "Cannot initialize TLS trust store")?;
+            Ok(Some(Arc::new(connector)))
+        }
+        _ => Err("DATABASE_TLS must be 'disable' or 'verify-full'".into()),
+    }
 }
 
 #[derive(Serialize)]
@@ -850,11 +903,18 @@ async fn main() {
         .unwrap_or(200).clamp(1, 1000);
     let timeout_ms = env::var("QUERY_TIMEOUT_MS").ok().and_then(|s| s.parse::<u64>().ok())
         .unwrap_or(10_000).clamp(100, 60_000);
-    let state = AppState { url: Arc::new(url), max_rows, timeout_ms };
+    let tls_mode = env::var("DATABASE_TLS").unwrap_or_else(|_| "disable".into());
+    let tls = verified_pg_tls(&tls_mode, env::var("DATABASE_TLS_CA_FILE").ok().as_deref())
+        .expect("Invalid PostgreSQL TLS configuration");
+    let access_token = env::var("DATAWIZZ_ACCESS_TOKEN").ok().map(|value| {
+        assert!(value.len() >= 32 && value.len() <= 4096,
+            "DATAWIZZ_ACCESS_TOKEN must contain 32..4096 characters");
+        Arc::new(value)
+    });
+    let state = AppState { url: Arc::new(url), max_rows, timeout_ms, tls, access_token };
     // Fail fast before accepting browser traffic.
     connect(&state).await.expect("Cannot connect to PostgreSQL");
-    let app = Router::new()
-        .route("/", get(index))
+    let api = Router::new()
         .route("/api/connections", get(connections))
         .route("/api/schema", get(schema))
         .route("/api/admin", get(admin_overview))
@@ -864,6 +924,10 @@ async fn main() {
         .route("/api/row-change", post(change_row))
         .route("/api/changeset", post(apply_changeset))
         .route("/api/row-insert", post(insert_row))
+        .route_layer(middleware::from_fn_with_state(state.clone(), require_access_token));
+    let app = Router::new()
+        .route("/", get(index))
+        .merge(api)
         .with_state(state);
     let host = env::var("HOST").unwrap_or_else(|_| "127.0.0.1".into());
     let address = format!("{host}:{port}");
@@ -875,6 +939,25 @@ async fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn access_token_is_opt_in_and_uses_exact_bearer_header() {
+        let secret = "0123456789abcdefghijklmnopqrstuvwxyz";
+        assert!(authorized(None, None));
+        assert!(!authorized(Some(secret), None));
+        assert!(!authorized(Some(secret), Some("Bearer incorrect")));
+        assert!(!authorized(Some(secret), Some("Basic other")));
+        assert!(authorized(Some(secret), Some("Bearer 0123456789abcdefghijklmnopqrstuvwxyz")));
+    }
+
+    #[test]
+    fn tls_requires_verified_configuration() {
+        assert!(verified_pg_tls("disable", None).unwrap().is_none());
+        assert!(verified_pg_tls("disable", Some("unused")).is_err());
+        assert!(verified_pg_tls("insecure", None).is_err());
+        assert!(verified_pg_tls("verify-full", Some("/missing/datawizz/ca.pem")).is_err());
+        assert!(verified_pg_tls("verify-full", None).unwrap().is_some());
+    }
 
     #[tokio::test]
     async fn connection_options_do_not_expose_credentials() {
@@ -941,6 +1024,8 @@ mod tests {
             url: Arc::new(url),
             max_rows,
             timeout_ms,
+            tls: None,
+            access_token: None,
         })
     }
 

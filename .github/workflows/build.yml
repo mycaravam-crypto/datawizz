@@ -94,6 +94,7 @@ jobs:
       DATABASE_URL: postgres://datawizz_test:test_only_password@127.0.0.1:5432/datawizz_test
       PGPASSWORD: test_only_password
       PORT: '3188'
+      DATAWIZZ_ACCESS_TOKEN: 0123456789abcdefghijklmnopqrstuvwxyz
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

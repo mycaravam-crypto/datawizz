@@ -6,17 +6,23 @@ const { chromium } = require("playwright");
   const browser = await chromium.launch({headless:true});
   try {
     const page = await browser.newPage({viewport:{width:1280,height:800}});
+    const denied=await page.request.get("http://127.0.0.1:3188/api/connections");
+    assert.equal(denied.status(),401,"Unauthenticated API requests must be rejected");
     const navigation = [];
     page.on("framenavigated",frame=>{if(frame===page.mainFrame())navigation.push(frame.url())});
     await page.goto("http://127.0.0.1:3188/");
     await page.getByRole("heading",{name:"SQL Workbench"}).waitFor();
+    await page.locator("#auth-area").waitFor({state:"visible"});
+    await page.locator("#access-token").fill("0123456789abcdefghijklmnopqrstuvwxyz");
+    await page.locator("#auth-unlock").click();
+    await page.locator("#auth-area").waitFor({state:"hidden"});
 
     // Administration opens in a separate explorer/detail workspace.
     await page.locator("#workspace-tab-admin").click();
     await page.locator("#admin-refresh").click();
     await page.locator("#admin-output .grid").waitFor();
     await page.locator("#admin-output").getByText("datawizz_test",{exact:true}).first().waitFor();
-    const adminResponse=await page.request.get("http://127.0.0.1:3188/api/admin");
+    const adminResponse=await page.request.get("http://127.0.0.1:3188/api/admin",{headers:{Authorization:"Bearer 0123456789abcdefghijklmnopqrstuvwxyz"}});
     assert.equal(adminResponse.status(),200);
     const admin=await adminResponse.json();
     assert(admin.roles.some(r=>r.name==="datawizz_test"));
@@ -98,7 +104,7 @@ const { chromium } = require("playwright");
     assert.equal(navigation.length,navigationCount,"Row dialog edit must not reload the page");
 
     // Persisted writes are visible from a separate server read, not only DOM state.
-    const response = await page.request.get("http://127.0.0.1:3188/api/table-rows?schema=public&table=datawizz_browser_e2e&offset=0&limit=20");
+    const response = await page.request.get("http://127.0.0.1:3188/api/table-rows?schema=public&table=datawizz_browser_e2e&offset=0&limit=20",{headers:{Authorization:"Bearer 0123456789abcdefghijklmnopqrstuvwxyz"}});
     assert.equal(response.status(),200);
     const rows = await response.json();
     assert.equal(rows.rows[0][1],"after-dialog");
