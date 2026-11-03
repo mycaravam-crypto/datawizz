@@ -12,7 +12,7 @@ DataWizz is a local-first single-user application. Remote access is opt-in and M
 6. Serve the site only from one HTTPS origin. The proxy must reject unexpected browser Origin values on API calls; do not enable cross-origin credentials or permissive CORS. Bearer authentication is required for both browser and API clients. Reject unexpected Host values.
 7. Keep access and error logs free of Authorization headers, query strings, SQL values and connection credentials. Protect secrets, certificates and proxy configuration using filesystem permissions and access controls.
 
-The example at `deploy/nginx/datawizz.conf` is a reference template. Replace the hostname, certificates and access restrictions before deployment. Validate with `nginx -t` and conduct an end-to-end TLS/authentication test. This template does **not** implement external user authentication or a VPN by itself.
+The example at `deploy/nginx/datawizz.conf` is a reference template and **allows loopback clients only** (for example through an administrator-controlled SSH tunnel). Keep this fail-closed rule until an approved VPN, edge identity check and explicit source-IP policy are in place. Replace the hostname and certificates before deployment. Validate with `nginx -t` and conduct an end-to-end TLS/authentication test. This template does **not** implement external user authentication or a VPN by itself.
 
 ## Authorization matrix
 
