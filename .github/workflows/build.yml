@@ -20,6 +20,13 @@ jobs:
           node scripts/check-ui.cjs
           node --check web/vendor/sql-editor.js
 
+  remote-proxy-security:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate HTTPS proxy, Origin restrictions and security headers
+        run: bash scripts/test-nginx-security.sh
+
   browser-tests:
     # Playwright 1.56 does not support Ubuntu 26.04 (ubuntu-latest on GitHub Actions).
     runs-on: ubuntu-24.04
@@ -78,7 +85,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy
+          components: clippy, rustfmt
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -86,6 +93,8 @@ jobs:
         run: |
           npm install --no-audit --no-fund
           npm run build:editor
+      - name: Rust format
+        run: cargo fmt --check
       - name: Clippy
         run: cargo clippy -- -D warnings
       - name: PostgreSQL integration tests
@@ -131,6 +140,17 @@ jobs:
           psql -h 127.0.0.1 -U datawizz_test -d datawizz_test -v ON_ERROR_STOP=1 -c "CREATE DATABASE datawizz_profile_test"
           psql -h 127.0.0.1 -U datawizz_test -d datawizz_profile_test -v ON_ERROR_STOP=1 -c "CREATE TABLE public.profile_only (id integer PRIMARY KEY, label text); INSERT INTO public.profile_only VALUES (1,'sandbox-only');"
           psql -h 127.0.0.1 -U datawizz_test -d datawizz_test -v ON_ERROR_STOP=1 -c "CREATE TABLE public.datawizz_browser_e2e (id integer PRIMARY KEY, label text); INSERT INTO public.datawizz_browser_e2e VALUES (1,'before'); CREATE TABLE public.datawizz_er_child (id integer PRIMARY KEY, parent_id integer REFERENCES public.datawizz_browser_e2e(id));"
+      - name: Seed a real restricted PostgreSQL login
+        run: |
+          psql -h 127.0.0.1 -U datawizz_test -d datawizz_test -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE datawizz_reader LOGIN PASSWORD 'reader_test_password';
+          GRANT CONNECT ON DATABASE datawizz_test TO datawizz_reader;
+          GRANT USAGE ON SCHEMA public TO datawizz_reader;
+          GRANT SELECT ON public.datawizz_browser_e2e TO datawizz_reader;
+          CREATE TABLE public.datawizz_private_e2e (id integer PRIMARY KEY, secret text);
+          INSERT INTO public.datawizz_private_e2e VALUES (1, 'not-for-readers');
+          REVOKE ALL ON public.datawizz_private_e2e FROM PUBLIC;
+          SQL
       - name: Build offline CodeMirror editor
         run: npm run build:editor
       - name: Start Rust application
@@ -145,6 +165,35 @@ jobs:
           exit 1
       - name: Chromium real database editing E2E
         run: node scripts/browser-postgres-e2e.cjs
+      - name: Restart application using a restricted database login
+        run: |
+          kill "$(cat /tmp/datawizz-e2e.pid)"
+          for attempt in $(seq 1 30); do
+            if ! curl -fsS http://127.0.0.1:3188/ >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          export DATABASE_PROFILES_JSON='[{"id":"reader","label":"Restricted reader","url":"postgres://datawizz_reader:reader_test_password@127.0.0.1:5432/datawizz_test","environment":"test","read_only":false}]'
+          cargo run > /tmp/datawizz-reader-e2e.log 2>&1 &
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:3188/ >/dev/null; then exit 0; fi
+            sleep 2
+          done
+          cat /tmp/datawizz-reader-e2e.log
+          exit 1
+      - name: Restricted HTTP credential E2E
+        run: node scripts/restricted-http-e2e.cjs
+      - name: Invalid PostgreSQL TLS configuration fails closed
+        run: |
+          if DATABASE_TLS=verify-full DATABASE_TLS_CA_FILE=/nonexistent/datawizz-ca.pem \
+            PORT=3190 cargo run > /tmp/datawizz-invalid-tls.log 2>&1; then
+            echo "Expected TLS configuration to fail" >&2
+            exit 1
+          fi
+          grep -q "Invalid PostgreSQL TLS configuration" /tmp/datawizz-invalid-tls.log
+          if grep -Eq "postgres://|test_only_password|reader_test_password" /tmp/datawizz-invalid-tls.log; then
+            echo "Sensitive connection material leaked in startup error" >&2
+            exit 1
+          fi
       - name: Log application diagnostics on failure
         if: failure()
         run: cat /tmp/datawizz-e2e.log || true
