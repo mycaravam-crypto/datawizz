@@ -230,7 +230,7 @@ const server = http.createServer(async (req, res) => {
     assert.equal(await page.locator("#admin-workspace").isVisible(),true);
     await page.locator("#admin-refresh").click();
     await page.locator("#admin-output .grid").waitFor();
-    assert.equal(await page.locator("#admin-nav .admin-tree-button").count(),15);
+    assert.equal(await page.locator("#admin-nav .admin-tree-button").count(),16);
     assert.equal(await page.locator("#admin-output .grid").count(),1,"Only the selected catalog must be visible");
     await page.locator("#admin-nav-roles").click();
     await page.locator("#admin-output").getByText("<img src=x onerror=alert(1)>").waitFor();
@@ -297,6 +297,40 @@ const server = http.createServer(async (req, res) => {
     assert.equal(await page.locator("#admin-open-sql").isDisabled(),true,"Unsafe PID must be rejected");
     assert.match(await page.locator("#admin-sql-message").textContent(),/PID must be/);
     assert.equal(autoExecuted,0);
+    await page.unroute("**/api/query");
+    // CSV preview and EXPLAIN must never execute the generated statement.
+    await page.locator("#workspace-tab-admin").click();
+    await page.locator("#admin-csv-nav").click();
+    await page.locator("#admin-csv-table").fill("demo");
+    await page.locator("#admin-csv-file").setInputFiles({
+      name:"rows.csv",mimeType:"text/csv",
+      buffer:Buffer.from('id,label\n123,"Robert); DROP TABLE secrets; --"\n124,"quoted ""label"""\n')
+    });
+    let csvExecutionCount=0;
+    await page.route("**/api/query",route=>{csvExecutionCount++;return route.continue()});
+    await page.locator("#admin-csv-preview").click();
+    await page.waitForFunction(() => document.getElementById("admin-csv-status").textContent.includes("row(s) mapped"));
+    assert.equal(await page.locator("#admin-csv-open").isDisabled(),false,
+      "CSV preview rejected: "+await page.locator("#admin-csv-status").textContent());
+    const preview=await page.locator("#admin-csv-sql").textContent();
+    assert(preview.includes('INSERT INTO "public"."demo" ("id", "label") VALUES'));
+    assert(preview.includes('$dw$Robert); DROP TABLE secrets; --$dw$'));
+    assert(preview.includes('$dw$quoted "label"$dw$'));
+    await page.locator("#admin-csv-open").click();
+    assert.equal(await page.locator("#workspace-tab-sql").getAttribute("aria-selected"),"true");
+    assert.equal(csvExecutionCount,0);
+    await page.locator("#explain").click();
+    assert((await page.locator("#sql").inputValue()).startsWith("EXPLAIN (FORMAT JSON) INSERT INTO "));
+    assert.equal(csvExecutionCount,0);
+    await page.locator("#workspace-tab-admin").click();
+    await page.locator("#admin-csv-nav").click();
+    await page.locator("#admin-csv-file").setInputFiles({
+      name:"invalid.csv",mimeType:"text/csv",buffer:Buffer.from("id,label\n1,ok\n2\n")
+    });
+    await page.locator("#admin-csv-preview").click();
+    await page.waitForFunction(() => document.getElementById("admin-csv-status").textContent.includes("different column count"));
+    assert.equal(await page.locator("#admin-csv-open").isDisabled(),true,"Invalid CSV row width must be rejected");
+    assert.match(await page.locator("#admin-csv-status").textContent(),/different column count/);
     await page.unroute("**/api/query");
     console.log("Chromium workbench UI smoke tests passed");
   } finally {await browser.close();}

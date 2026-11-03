@@ -66,6 +66,24 @@ const { chromium } = require("playwright");
     // The generated statement is never run automatically; the existing SQL tab is preserved.
 
 
+    // Import preview maps CSV headers to real PostgreSQL columns, but never writes.
+    await page.locator("#workspace-tab-admin").click();
+    await page.locator("#admin-csv-nav").click();
+    await page.locator("#admin-csv-table").fill("datawizz_browser_e2e");
+    await page.locator("#admin-csv-file").setInputFiles({
+      name:"example.csv",mimeType:"text/csv",buffer:Buffer.from("id,label\n99,dry-run\n")
+    });
+    await page.locator("#admin-csv-preview").click();
+    await page.waitForFunction(() => document.getElementById("admin-csv-status").textContent.includes("row(s) mapped"));
+    await page.locator("#admin-csv-open").waitFor({state:"visible"});
+    assert.equal(await page.locator("#admin-csv-open").isDisabled(),false);
+    assert.match(await page.locator("#admin-csv-sql").textContent(),/INSERT INTO "public"."datawizz_browser_e2e"/);
+    await page.locator("#admin-csv-open").click();
+    assert.equal(await page.locator("#workspace-tab-sql").getAttribute("aria-selected"),"true");
+    const checkImport=await page.request.get("http://127.0.0.1:3188/api/table-rows?schema=public&table=datawizz_browser_e2e&offset=0&limit=20",
+      {headers:{Authorization:"Bearer 0123456789abcdefghijklmnopqrstuvwxyz"}});
+    assert(!(await checkImport.json()).rows.some(row=>row.includes("dry-run")),"Preview must not modify data");
+
     await page.locator("#filter").fill("datawizz_browser_e2e");
     await page.getByRole("button",{name:"Preview public.datawizz_browser_e2e"}).click();
     // Column metadata loads asynchronously; row editing is enabled only after it arrives.
