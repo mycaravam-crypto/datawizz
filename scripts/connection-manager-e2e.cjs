@@ -28,9 +28,9 @@ const headers = {Authorization: "Bearer " + token};
   await page.locator("#manager-password").fill("test_only_password");
   await page.locator("#manager-environment").selectOption("test");
   await page.locator("#manager-test").click();
-  await page.locator("#manager-notice").getByText(/Verified: datawizz_profile_test/).waitFor();
+  await page.waitForFunction(()=>document.getElementById("manager-notice").textContent.includes("Verified: datawizz_profile_test"));
   await page.locator("#manager-save").click();
-  await page.locator("#manager-notice").getByText(/Connection saved and verified/).waitFor();
+  await page.waitForFunction(()=>document.getElementById("manager-notice").textContent.includes("Connection saved and verified"));
   assert.equal(await page.locator("#manager-password").inputValue(),"");
   await page.locator("#manager-close").click();
 
@@ -64,7 +64,7 @@ const headers = {Authorization: "Bearer " + token};
   assert.equal(await page.locator("#manager-password").inputValue(),"");
   await page.locator("#manager-label").fill("Managed QA renamed");
   await page.locator("#manager-save").click();
-  await page.locator("#manager-notice").getByText(/Connection saved and verified/).waitFor();
+  await page.waitForFunction(()=>document.getElementById("manager-notice").textContent.includes("Connection saved and verified"));
   await page.locator("#manager-close").click();
   const renamed=await page.request.get(base+"/api/managed-connections",{headers});
   assert.equal((await renamed.json()).profiles[0].label,"Managed QA renamed");
@@ -79,8 +79,8 @@ const headers = {Authorization: "Bearer " + token};
   assert.equal(invalid.status(),400);
   assert(!JSON.stringify(await invalid.json()).includes(production.password));
 
-  await page.locator("#connection-chooser").selectOption("managed-qa");
   page.once("dialog",d=>d.accept());
+  await page.locator("#connection-chooser").selectOption("managed-qa");
   // The chooser's confirmation has to be accepted before navigation.
   await page.waitForLoadState("load");
   await page.locator("#auth-area").waitFor({state:"visible"});
