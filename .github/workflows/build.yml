@@ -13,7 +13,7 @@ jobs:
           node-version: '22'
       - name: Build offline CodeMirror editor
         run: |
-          npm install --no-audit --no-fund
+          npm ci --no-audit --no-fund
           npm run build:editor
       - name: Validate embedded JavaScript and key UI elements
         run: |
@@ -91,7 +91,7 @@ jobs:
           node-version: '22'
       - name: Build offline editor assets
         run: |
-          npm install --no-audit --no-fund
+          npm ci --no-audit --no-fund
           npm run build:editor
       - name: Rust format
         run: cargo fmt --check
