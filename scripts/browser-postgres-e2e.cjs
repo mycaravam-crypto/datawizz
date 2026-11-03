@@ -11,9 +11,10 @@ const { chromium } = require("playwright");
     await page.goto("http://127.0.0.1:3188/");
     await page.getByRole("heading",{name:"SQL Workbench"}).waitFor();
 
-    // Read-only administration inventory is backed by PostgreSQL, not mocked data.
+    // Administration opens in a separate explorer/detail workspace.
+    await page.locator("#workspace-tab-admin").click();
     await page.locator("#admin-refresh").click();
-    await page.locator("#admin-output h3").first().waitFor();
+    await page.locator("#admin-output .grid").waitFor();
     await page.locator("#admin-output").getByText("datawizz_test",{exact:true}).first().waitFor();
     const adminResponse=await page.request.get("http://127.0.0.1:3188/api/admin");
     assert.equal(adminResponse.status(),200);
@@ -31,6 +32,11 @@ const { chromium } = require("playwright");
     assert(admin.table_stats.some(t=>t.table==="datawizz_browser_e2e"));
     assert(admin.settings.some(s=>s.name==="max_connections"));
     assert(Array.isArray(admin.locks)&&Array.isArray(admin.privileges)&&Array.isArray(admin.routines));
+    await page.locator("#admin-nav-relations").click();
+    await page.locator("#admin-section-search").fill("datawizz_browser_e2e");
+    await page.locator("#admin-output tbody tr").first().click();
+    await page.locator("#admin-detail").getByText("datawizz_browser_e2e").waitFor();
+    await page.locator("#admin-sql-nav").click();
     await page.locator("#admin-task").selectOption("table-grant");
     await page.locator("#admin-field-0").fill("public");
     await page.locator("#admin-field-1").fill("datawizz_browser_e2e");
@@ -38,6 +44,7 @@ const { chromium } = require("playwright");
     await page.locator("#admin-generate").click();
     assert.equal(await page.locator("#admin-sql-preview").textContent(),'GRANT SELECT ON TABLE "public"."datawizz_browser_e2e" TO PUBLIC;');
     await page.locator("#admin-open-sql").click();
+    assert.equal(await page.locator("#workspace-tab-sql").getAttribute("aria-selected"),"true");
     assert.match(await page.locator("#sql").inputValue(),/^GRANT SELECT ON TABLE/);
     // The generated statement is never run automatically; the existing SQL tab is preserved.
 
