@@ -216,6 +216,15 @@ impl ManagedStore {
                     .map_err(|_| "Cannot secure profile store directory")?;
             }
         }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let metadata = fs::symlink_metadata(parent)
+                .map_err(|_| "Cannot inspect profile store directory")?;
+            if !metadata.is_dir() || metadata.permissions().mode() & 0o022 != 0 {
+                return Err("Profile store directory must not be group- or world-writable".into());
+            }
+        }
         let static_ids: HashSet<_> = existing.iter().map(|p| p.id.clone()).collect();
         let profiles = match fs::symlink_metadata(&path) {
             Ok(metadata) => {
