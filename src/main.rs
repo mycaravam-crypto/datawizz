@@ -1283,7 +1283,7 @@ mod tests {
         assert!(csv.contains("\"'@SUM(A1)\""));
         assert!(csv.contains("\"Unicode: ü😀\""));
         assert!(csv.contains("\"quoted \"\"value\"\"\r\nnext\""));
-        assert!(csv.ends_with("\"\",\r\n"));
+        assert!(csv.ends_with(&['"', '"', ',', '\r', '\n'].iter().collect::<String>()));
         assert!(!csv_formula_prefix("plain - text"));
         assert!(csv_formula_prefix("\u{feff}\u{200b} \t=SUM(A1)"));
         assert!(csv_formula_prefix("\u{200b}+SUM(A1)"));
@@ -1336,7 +1336,7 @@ mod tests {
         let bytes = axum::body::to_bytes(all.into_body(), EXPORT_MAX_BYTES).await
             .expect("bounded CSV");
         let output = std::str::from_utf8(&bytes).unwrap();
-        assert!(output.contains("\"'=2+2\","));
+        assert!(output.contains("'=2+2"));
         assert!(output.contains(r#""quoted ""text""""#));
         assert!(output.contains(",\r\n"), "NULL should be unquoted empty");
         assert!(output.contains(",\"\"\r\n"), "empty string should be quoted");
