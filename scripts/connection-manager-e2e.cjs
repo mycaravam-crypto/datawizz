@@ -79,11 +79,11 @@ const headers = {Authorization: "Bearer " + token};
   assert.equal(invalid.status(),400);
   assert(!JSON.stringify(await invalid.json()).includes(production.password));
 
+  const navigated=page.waitForEvent("framenavigated",{timeout:15000});
   page.once("dialog",d=>d.accept());
   await page.locator("#connection-chooser").selectOption("managed-qa");
-  // The chooser's confirmation has to be accepted before navigation.
-  await page.waitForLoadState("load");
-  await page.locator("#auth-area").waitFor({state:"visible"});
+  await navigated;
+  await page.locator("#auth-area").waitFor({state:"visible",timeout:15000});
   await page.locator("#access-token").fill(token);
   await page.locator("#auth-unlock").click();
   await page.locator("#auth-area").waitFor({state:"hidden"});
