@@ -10,6 +10,20 @@ const { chromium } = require("playwright");
     page.on("framenavigated",frame=>{if(frame===page.mainFrame())navigation.push(frame.url())});
     await page.goto("http://127.0.0.1:3188/");
     await page.getByRole("heading",{name:"SQL Workbench"}).waitFor();
+
+    // Read-only administration inventory is backed by PostgreSQL, not mocked data.
+    await page.locator("#admin-refresh").click();
+    await page.locator("#admin-output h3").first().waitFor();
+    await page.locator("#admin-output").getByText("datawizz_test",{exact:true}).first().waitFor();
+    const adminResponse=await page.request.get("http://127.0.0.1:3188/api/admin");
+    assert.equal(adminResponse.status(),200);
+    const admin=await adminResponse.json();
+    assert(admin.roles.some(r=>r.name==="datawizz_test"));
+    assert(admin.databases.some(d=>d.name==="datawizz_test"));
+    assert(admin.extensions.length>0);
+    const adminJson=JSON.stringify(admin);
+    for(const hidden of ['"query"','"rolpassword"','"client_addr"'])assert(!adminJson.includes(hidden));
+
     await page.locator("#filter").fill("datawizz_browser_e2e");
     await page.getByRole("button",{name:"Preview public.datawizz_browser_e2e"}).click();
     // Column metadata loads asynchronously; row editing is enabled only after it arrives.

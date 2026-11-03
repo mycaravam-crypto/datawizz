@@ -12,7 +12,8 @@ jobs:
         run: node scripts/check-ui.cjs
 
   browser-tests:
-    runs-on: ubuntu-latest
+    # Playwright 1.56 does not support Ubuntu 26.04 (ubuntu-latest on GitHub Actions).
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -73,7 +74,8 @@ jobs:
         run: cargo test -- --test-threads=1
 
   browser-postgres-e2e:
-    runs-on: ubuntu-latest
+    # Playwright 1.56 does not support Ubuntu 26.04 (ubuntu-latest on GitHub Actions).
+    runs-on: ubuntu-24.04
     services:
       postgres:
         image: postgres:16

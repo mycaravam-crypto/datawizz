@@ -36,6 +36,7 @@
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition:none!important;animation:none!important}}
 
 .review-dialog{background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:14px;width:min(94vw,780px);max-height:88vh;padding:24px}.review-dialog h2{margin:0 0 8px;font-size:20px}.review-scroll{max-height:52vh;overflow:auto;margin-block:16px;border:1px solid var(--border);border-radius:9px}.review-table{width:100%;border-collapse:collapse;font-size:13px}.review-table th,.review-table td{padding:9px 12px;text-align:left;vertical-align:top;border-bottom:1px solid var(--border);overflow-wrap:anywhere;max-width:260px}.review-table th{background:var(--raised);position:sticky;top:0}.review-table td:nth-child(3){color:var(--muted)}.review-table td:nth-child(4){font-weight:650}.review-actions{justify-content:flex-end}.review-null{font-style:italic;color:var(--warn)}@media(max-width:670px){.review-dialog{padding:16px}.review-table th,.review-table td{padding:8px}}
+.admin-overview{padding:16px 18px;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,390px),1fr));gap:16px}.admin-section{min-width:0}.admin-section h3{font-size:14px;margin:0 0 9px}.admin-scroll{overflow:auto;max-height:290px;border:1px solid var(--border);border-radius:9px}.admin-scroll .grid th,.admin-scroll .grid td{padding:7px 10px;font-size:12px}.admin-scroll .grid th:first-child,.admin-scroll .grid td:first-child{position:static}.admin-message{padding:16px 18px;color:var(--muted)}.admin-section .note{padding:10px}
 </style>
 </head>
 <body>
@@ -55,6 +56,7 @@
 <section class="card results" aria-labelledby="result-heading"><div class="results-header"><div><h2 id="result-heading" class="card-title">Query results</h2><div id="message" class="note" role="status" aria-live="polite">Run a query to view data.</div></div><div class="buttons"><label class="filter-bar"><span class="eyebrow">Filter</span><input id="result-filter" class="input" type="search" title="Shortcut: Ctrl/⌘ + Shift + F" placeholder="Loaded rows only" aria-label="Filter loaded result rows"></label><button id="result-filter-clear" type="button" class="btn small" aria-label="Clear result filter" title="Clear filter">Clear filter</button><span class="stat" id="row-stat">0 rows</span><span class="stat" id="time-stat">— ms</span><button class="btn small" id="csv" type="button" disabled>↓ Export loaded CSV</button></div></div>
 <div id="changes-bar" class="changes-bar" hidden><strong id="changes-count">0 pending changes</strong><span class="note">Changes are staged locally. Saving commits all rows atomically.</span><button id="changes-save" type="button" class="btn primary small">Review & save</button><button id="changes-discard" type="button" class="btn small">Discard changes</button></div><div id="row-actions" class="selection-bar row-toolbar" hidden><span class="eyebrow">Table actions</span><button class="btn small" id="browse" type="button" disabled title="Load rows; does not open the editor">↻ Refresh rows</button><button class="btn small" id="insert" type="button" disabled>+ Insert row</button><span id="row-action-hint" class="note" aria-live="polite">Select a row to edit it.</span><span class="note" id="grid-keyboard-hint" title="Keyboard controls for table cells">Cells: arrows navigate · F2/Enter edit · Tab next · Esc cancel</span><span class="toolbar-spacer"></span><button id="edit-mode" class="btn small" type="button" aria-pressed="false" disabled>Edit mode: Off</button><button id="row-edit" class="btn small primary" type="button" disabled>Edit row</button><button id="row-delete" class="btn small" type="button" disabled>Delete</button><button id="bulk-toggle" class="btn small" type="button" aria-controls="selection-bar" aria-expanded="false" disabled>Bulk edit</button><button id="changes-undo" type="button" class="btn small" disabled title="Undo staged change">Undo</button><button id="changes-redo" type="button" class="btn small" disabled title="Redo staged change">Redo</button></div><div id="selection-bar" class="selection-bar" hidden><span id="selection-count" class="stat">0 selected</span><label class="note" for="bulk-column">Column</label><select id="bulk-column" class="input" style="width:auto"></select><input id="bulk-value" aria-label="Value for selected rows" class="input" style="width:180px" placeholder="New value"><label class="note"><input type="checkbox" id="bulk-null"> SQL NULL</label><button type="button" class="btn small" id="bulk-apply">Apply to selected</button><button type="button" class="btn small" id="bulk-clear">Clear selection</button><span class="note">Up to 20 rows · staged and saved atomically</span></div><div id="output" class="results-content" role="region" aria-label="SQL results table" tabindex="0" aria-live="off"><div class="empty"><strong>No results yet</strong><span>Run a statement or choose a table from the explorer.</span></div></div>
 <div id="server-pager" class="server-pager" hidden><button class="btn small" id="server-prev" type="button">← Previous 100</button><span id="server-page-info" class="note"></span><button class="btn small" id="server-next" type="button">Next 100 →</button></div><div class="footer"><span id="result-note" class="note">Only loaded rows can be exported.</span><div class="buttons"><button id="prev" class="btn small" type="button" disabled>← Previous</button><span id="page" class="note">Page —</span><button id="next" class="btn small" type="button" disabled>Next →</button></div></div></section>
+<section class="card" aria-labelledby="admin-heading"><div class="card-header"><div><h2 id="admin-heading" class="card-title">PostgreSQL administration</h2><p class="note">Read-only inventory · database permissions determine visibility · up to 100 entries per section</p></div><button id="admin-refresh" class="btn small" type="button">Load administration</button></div><div id="admin-output" class="admin-message" role="region" aria-label="Database administration inventory" aria-live="polite">Load to inspect databases, roles, memberships, sessions and extensions. No administrative changes are executed.</div></section>
 </main>
 </div>
 <dialog id="changes-review" aria-labelledby="changes-review-title" class="review-dialog">
@@ -355,6 +357,35 @@ $("result-filter-clear").onclick=()=>{$("result-filter").value="";page=0;renderR
 $("result-filter").addEventListener("keydown",e=>{if(e.key==="Escape"&&e.currentTarget.value){e.preventDefault();$("result-filter-clear").click()}});
 document.addEventListener("keydown",e=>{if((e.ctrlKey||e.metaKey)&&e.shiftKey&&e.key.toLowerCase()==="f"){e.preventDefault();$("result-filter").focus();$("result-filter").select()}});
 $("run").onclick=run;sql.addEventListener("keydown",e=>{if(e.key==="Enter"&&(e.ctrlKey||e.metaKey)){e.preventDefault();run()}if(e.key==="Tab"&&!e.shiftKey){e.preventDefault();const start=sql.selectionStart;sql.setRangeText("  ",start,sql.selectionEnd,"end")}});
+function renderAdminSection(label,fields,items){
+ const section=element("section","admin-section");
+ section.append(element("h3","",label+" · "+items.length+(items.length===100?" (first 100)":"")));
+ const scroll=element("div","admin-scroll");
+ if(!items.length){scroll.append(element("p","note","No entries visible."));section.append(scroll);return section}
+ const table=element("table","grid"),head=element("thead"),headerRow=element("tr");
+ for(const [key,title] of fields){const th=element("th","",title);th.scope="col";headerRow.append(th)}
+ head.append(headerRow);table.append(head);
+ const body=element("tbody");
+ for(const item of items){const tr=element("tr");for(const [key] of fields){const value=item[key];tr.append(element("td","",value===null||value===undefined?"—":typeof value==="boolean"?(value?"Yes":"No"):String(value)))}body.append(tr)}
+ table.append(body);scroll.append(table);section.append(scroll);return section
+}
+$("admin-refresh").onclick=async()=>{
+ const button=$("admin-refresh"),output=$("admin-output");
+ button.disabled=true;text(button,"Loading…");output.className="admin-message";text(output,"Loading PostgreSQL catalog…");
+ try{
+  const data=await api("/api/admin",{cache:"no-store"});
+  const sections=[
+   ["Databases",[["name","Database"],["owner","Owner"],["allow_connections","Connections"]],data.databases],
+   ["Roles",[["name","Role"],["can_login","Login"],["superuser","Superuser"],["create_db","Create DB"],["create_role","Create role"]],data.roles],
+   ["Role memberships",[["role","Role"],["member","Member"],["admin_option","Admin option"]],data.memberships],
+   ["Sessions",[["pid","PID"],["database","Database"],["username","User"],["state","State"],["wait_event_type","Wait"]],data.sessions],
+   ["Extensions",[["name","Extension"],["version","Version"],["schema","Schema"]],data.extensions]
+  ];
+  output.className="admin-overview";output.replaceChildren(...sections.map(([label,fields,items])=>renderAdminSection(label,fields,items)));
+  text(button,"Refresh administration");
+ }catch(e){output.className="admin-message";output.replaceChildren(element("div","error-box",e.message));text(button,"Retry administration")}
+ finally{button.disabled=false}
+};
 loadObjects();
 </script>
 </body></html>

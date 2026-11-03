@@ -523,6 +523,105 @@ async fn insert_row(State(state): State<AppState>, Json(req): Json<InsertRow>) -
     Ok(Json(ChangeResult{affected}))
 }
 
+// Read-only PostgreSQL administration inventory. No password hashes, session SQL text or client addresses.
+#[derive(Serialize)]
+struct AdminDatabase {
+    name: String,
+    owner: String,
+    allow_connections: bool,
+}
+
+#[derive(Serialize)]
+struct AdminRole {
+    name: String,
+    can_login: bool,
+    superuser: bool,
+    create_db: bool,
+    create_role: bool,
+}
+
+#[derive(Serialize)]
+struct AdminMembership {
+    role: String,
+    member: String,
+    admin_option: bool,
+}
+
+#[derive(Serialize)]
+struct AdminSession {
+    pid: i32,
+    database: Option<String>,
+    username: Option<String>,
+    state: Option<String>,
+    wait_event_type: Option<String>,
+}
+
+#[derive(Serialize)]
+struct AdminExtension {
+    name: String,
+    version: String,
+    schema: String,
+}
+
+#[derive(Serialize)]
+struct AdminOverview {
+    databases: Vec<AdminDatabase>,
+    roles: Vec<AdminRole>,
+    memberships: Vec<AdminMembership>,
+    sessions: Vec<AdminSession>,
+    extensions: Vec<AdminExtension>,
+}
+
+async fn admin_overview(State(state): State<AppState>) -> ApiResult<AdminOverview> {
+    let client = connect(&state).await?;
+    // Each catalog query is fixed, read-only and bounded. PostgreSQL controls which metadata is visible.
+    let databases = client.query(
+        "SELECT datname::text, pg_catalog.pg_get_userbyid(datdba)::text, datallowconn
+         FROM pg_catalog.pg_database ORDER BY datname LIMIT 100", &[]
+    ).await.map_err(|e| postgres_error(&e))?;
+    let roles = client.query(
+        "SELECT rolname::text, rolcanlogin, rolsuper, rolcreatedb, rolcreaterole
+         FROM pg_catalog.pg_roles ORDER BY rolname LIMIT 100", &[]
+    ).await.map_err(|e| postgres_error(&e))?;
+    let memberships = client.query(
+        "SELECT r.rolname::text, m.rolname::text, am.admin_option
+         FROM pg_catalog.pg_auth_members am
+         JOIN pg_catalog.pg_roles r ON r.oid = am.roleid
+         JOIN pg_catalog.pg_roles m ON m.oid = am.member
+         ORDER BY r.rolname, m.rolname LIMIT 100", &[]
+    ).await.map_err(|e| postgres_error(&e))?;
+    let sessions = client.query(
+        "SELECT pid, datname::text, usename::text, state::text, wait_event_type::text
+         FROM pg_catalog.pg_stat_activity ORDER BY pid LIMIT 100", &[]
+    ).await.map_err(|e| postgres_error(&e))?;
+    let extensions = client.query(
+        "SELECT e.extname::text, e.extversion::text, n.nspname::text
+         FROM pg_catalog.pg_extension e
+         JOIN pg_catalog.pg_namespace n ON n.oid = e.extnamespace
+         ORDER BY e.extname LIMIT 100", &[]
+    ).await.map_err(|e| postgres_error(&e))?;
+
+    Ok(Json(AdminOverview {
+        databases: databases.iter().map(|r| AdminDatabase {
+            name: r.get(0), owner: r.get(1), allow_connections: r.get(2),
+        }).collect(),
+        roles: roles.iter().map(|r| AdminRole {
+            name: r.get(0), can_login: r.get(1), superuser: r.get(2),
+            create_db: r.get(3), create_role: r.get(4),
+        }).collect(),
+        memberships: memberships.iter().map(|r| AdminMembership {
+            role: r.get(0), member: r.get(1), admin_option: r.get(2),
+        }).collect(),
+        sessions: sessions.iter().map(|r| AdminSession {
+            pid: r.get(0), database: r.get(1), username: r.get(2),
+            state: r.get(3), wait_event_type: r.get(4),
+        }).collect(),
+        extensions: extensions.iter().map(|r| AdminExtension {
+            name: r.get(0), version: r.get(1), schema: r.get(2),
+        }).collect(),
+    }))
+}
+
 async fn index() -> impl IntoResponse {
     ([(header::CACHE_CONTROL, "no-store")], Html(include_str!("../web/index.html")))
 }
@@ -542,6 +641,7 @@ async fn main() {
         .route("/", get(index))
         .route("/api/connections", get(connections))
         .route("/api/schema", get(schema))
+        .route("/api/admin", get(admin_overview))
         .route("/api/columns", get(columns))
         .route("/api/query", post(execute))
         .route("/api/table-rows", get(table_rows))
@@ -568,6 +668,20 @@ mod tests {
         let body = serde_json::to_string(&profiles).expect("serialize options");
         assert!(!body.contains("postgres://"));
         assert!(!body.contains("password"));
+    }
+
+    #[tokio::test]
+    async fn admin_inventory_is_read_only_and_omits_sensitive_fields() {
+        let Some(state) = test_state(200, 10_000) else { return; };
+        let Json(overview) = admin_overview(State(state)).await.expect("read admin catalog");
+        assert!(!overview.databases.is_empty());
+        assert!(!overview.roles.is_empty());
+        assert!(!overview.sessions.is_empty());
+        assert!(!overview.extensions.is_empty());
+        let json = serde_json::to_string(&overview).expect("serialize admin overview");
+        for hidden in ["rolpassword", "client_addr", "\"query\"", "DATABASE_URL"] {
+            assert!(!json.contains(hidden), "admin response must not expose {hidden}");
+        }
     }
 
     fn test_state(max_rows: usize, timeout_ms: u64) -> Option<AppState> {
