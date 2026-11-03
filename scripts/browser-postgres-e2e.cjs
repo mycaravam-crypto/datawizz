@@ -10,7 +10,7 @@ const { chromium } = require("playwright");
     assert.equal(denied.status(),401,"Unauthenticated API requests must be rejected");
     const navigation = [];
     page.on("framenavigated",frame=>{if(frame===page.mainFrame())navigation.push(frame.url())});
-    await page.goto("http://127.0.0.1:3188/");
+    await page.goto("http://127.0.0.1:3188/?basic-editor=1");
     await page.getByRole("heading",{name:"SQL Workbench"}).waitFor();
     await page.locator("#auth-area").waitFor({state:"visible"});
     await page.locator("#access-token").fill("0123456789abcdefghijklmnopqrstuvwxyz");

@@ -3,7 +3,8 @@ const vm = require("node:vm");
 const assert = require("node:assert/strict");
 
 const html = fs.readFileSync("web/index.html", "utf8");
-const scripts = [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)];
+const scripts = [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)]
+  .filter(match => match[1].trim());
 assert.equal(scripts.length, 1, "Expected one embedded application script");
 new vm.Script(scripts[0][1], { filename: "web/index.html" });
 

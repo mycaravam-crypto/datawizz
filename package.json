@@ -1,0 +1,17 @@
+{
+  "name": "datawizz-editor-build",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "build:editor": "node scripts/build-editor.cjs"
+  },
+  "devDependencies": {
+    "codemirror": "6.0.2",
+    "@codemirror/lang-sql": "6.10.0",
+    "@codemirror/autocomplete": "6.20.0",
+    "@codemirror/state": "6.7.6",
+    "@codemirror/search": "6.7.2",
+    "@codemirror/commands": "6.10.4",
+    "esbuild": "0.28.2"
+  }
+}

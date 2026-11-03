@@ -1,4 +1,13 @@
 # syntax=docker/dockerfile:1
+# The editor is compiled only at image build time; runtime needs no Node or CDN.
+FROM node:22-bookworm AS editor-builder
+WORKDIR /editor
+COPY package.json ./
+RUN npm install --no-audit --no-fund
+COPY scripts/build-editor.cjs ./scripts/build-editor.cjs
+COPY web/editor-entry.js ./web/editor-entry.js
+RUN npm run build:editor
+
 FROM rust:1-bookworm AS builder
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
@@ -21,6 +30,7 @@ WORKDIR /build
 COPY Cargo.toml ./
 COPY src ./src
 COPY web ./web
+COPY --from=editor-builder /editor/web/vendor/sql-editor.js ./web/vendor/sql-editor.js
 RUN cargo build --release
 
 FROM debian:bookworm-slim AS runtime

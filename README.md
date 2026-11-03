@@ -1,13 +1,13 @@
 # datawizz
 
-Small, fast, local-first PostgreSQL UI written in Rust. One executable; no Node or frontend build.
+Small, fast, local-first PostgreSQL UI written in Rust. One runtime executable; CodeMirror 6 is bundled at Docker/CI build time, with a no-build textarea fallback for plain Cargo builds.
 
 ## MVP features
 - Explore readable PostgreSQL tables, views and columns
 - Optional server-defined connection profiles with safe read-only mode and an ER relationship view
 - Execute a single SQL statement (SELECT and permitted writes/DDL)
 - Display bounded results, errors, runtime and affected rows; export loaded rows or up to 1,000 server-filtered table rows as CSV
-- Built-in HTML/JavaScript editor. No user accounts or stored credentials.
+- Offline-bundled CodeMirror 6 PostgreSQL SQL editor with highlighting, line numbers, completion and keyboard search; a textarea fallback remains available. No user accounts or stored DB credentials.
 - PostgreSQL administration inventory: databases, roles/memberships, sessions, extensions, schemas, relations, indexes, constraints, table statistics, locks, safe server settings, visible table privileges and routines (max 100 entries per section).
 - Guided administration SQL templates for roles, memberships, schemas, table/database grants, database lifecycle, session control and maintenance; generated statements open in a separate editor tab and never run automatically.
 - SQL productivity: bounded session-only query history, manually saved browser scripts, and Ctrl+Space completion from loaded PostgreSQL metadata.
@@ -164,11 +164,11 @@ database, and DB permissions/locks may reject them.
 **Security limitation:** This remains a **single-user development application**.
 A bearer token and verified PostgreSQL TLS are available by explicit
 configuration, but the default Docker environment is for trusted local use only.
-Do not expose plain HTTP or database connections to untrusted networks. The SQL
-editor already supports arbitrary permitted SQL; the builder does not elevate
-database rights. Direct write-capable administration endpoints and secure remote
-operation remain out of scope pending the controls in
-[security issue #63](https://github.com/mycaravam-crypto/datawizz/issues/63).
+Do not expose plain HTTP or database connections to untrusted networks. The SQL editor already supports arbitrary permitted SQL. The SQL
+builder does not bypass or elevate database rights. Direct write-capable admin
+endpoints, server configuration changes and remote operation remain blocked
+pending the security prerequisites in
+[the administration roadmap](https://github.com/mycaravam-crypto/datawizz/issues/59).
 
 ## Optional API access token and verified PostgreSQL TLS
 
@@ -187,10 +187,8 @@ anchor at `DATABASE_TLS_CA_FILE`. Hostname verification remains enabled and
 there is no insecure skip-verification mode. `DATABASE_TLS=disable` retains
 the original local development default. Use TLS for external DB hosts.
 
-Server-defined connection profiles, isolated routing and explicit profile switching
-were added in [PR #75](https://github.com/mycaravam-crypto/datawizz/pull/75).
-Runtime-managed profiles, SSH tunneling, user-specific authentication/RBAC and
-remote HTTPS termination remain outside the current implementation.
+Connection switching, session isolation, SSH tunneling and user-specific DB
+permissions remain outside this first security increment.
 
 ## Database Workspace profiles and ER relationships (#72)
 
@@ -248,6 +246,45 @@ requests, or interactive drag-and-drop schema modeling. Use HTTPS and
 external access control before exposing this application outside trusted
 loopback networking. The default Docker Compose setup remains local-only.
 
+## SQL Editor 2.0 (Issue #70)
+
+The default Docker/CI build embeds **CodeMirror 6** with PostgreSQL syntax
+highlighting, line numbers, search (`Ctrl/⌘+F`), indentation and
+`Ctrl/⌘+Space` metadata suggestions. There is **no runtime CDN dependency**;
+the editor bundle is served by the existing Rust binary. Existing SQL tabs,
+query history, admin-generated SQL drafts and `Ctrl/⌘+Enter` execution use
+the same editor content. Completion reads only already loaded database metadata.
+
+When running `cargo run` directly from a fresh source checkout, the minimal
+built-in textarea fallback remains available. To enable the rich editor for
+local Rust builds, install Node.js 22 and run:
+
+```sh
+npm install --no-audit --no-fund
+npm run build:editor
+cargo run
+```
+
+The Dockerfile performs the editor bundling automatically in a Node build
+stage and copies only the final JavaScript bundle into the Rust build stage.
+Node.js is not needed in the runtime image. For troubleshooting or
+assistive-technology compatibility, append `?basic-editor=1` to use the
+original textarea. CodeMirror is MIT-licensed; JavaScript package versions
+are pinned in `package.json`.
+
+**Optional draft recovery:** Query text and unsent tabs are never persisted
+automatically unless the user explicitly enables **Save unsent SQL drafts**
+and confirms the warning. Consent and drafts are browser-local, unencrypted
+and profile-scoped. Limits: 12 tabs, 16 KiB each, 40 KiB total.
+The user must explicitly click **Restore saved drafts** after a reload; SQL
+is never executed by restoration. Disabling consent or choosing **Delete
+saved drafts** removes both the stored drafts and consent. Never enable this
+on shared workstations or for confidential SQL.
+
+Saved scripts now have an explicit **Export** action to download a `.sql` file.
+Query history remains memory-only and is never included in automatic
+recovery.
+
 ## SQL productivity (first increment of #70)
 
 The SQL console includes a collapsible **Query history & saved scripts** panel.
@@ -268,10 +305,10 @@ The SQL console includes a collapsible **Query history & saved scripts** panel.
   and Enter/Tab or click a suggestion; Escape dismisses it. Suggestions are drawn
   only from metadata already loaded by the normal explorer, without a new API call.
 
-The textarea remains the editor for now. An offline-bundled, accessible editor with
-syntax highlighting and richer parser-backed completion, plus optional explicitly
-consented draft recovery, are still open under #70. No network CDN, hidden query
-persistence, browser extension or new runtime dependency was introduced.
+The rich editor is bundled for Docker and CI. The textarea remains as the
+explicit basic-editor fallback; no CDN, implicit persistence or browser extension
+is required. Accessible editor ergonomics and completion can be further refined
+under #70.
 
 ## Data Explorer 2.0 — database filters, ordering and bounded export
 
@@ -331,12 +368,11 @@ schema diff and safe native `pg_dump`/`pg_restore` workflows remain in #65.
 | `DATAWIZZ_ACCESS_TOKEN` | unset | Optional API bearer token (at least 32 characters); protects all `/api/` routes |
 | `DATABASE_TLS` | `disable` | `disable` or `verify-full` (verified PostgreSQL TLS) |
 | `DATABASE_TLS_CA_FILE` | unset | PEM CA certificate for the verified TLS connection |
-| `DATABASE_PROFILES_JSON` | unset | Optional server-side PostgreSQL profiles (up to 7 additional); additional profiles require API token, production profiles must be read-only and use verified TLS |
 
 ## Security and limitations
 
-**Single-user development use only.** HTTP API bearer-token authentication is optional via `DATAWIZZ_ACCESS_TOKEN`; the default local setup is not authenticated. No HTTPS termination is provided by the application. Never publish it directly to untrusted networks. Remote operation requires separately configured HTTPS/access controls and least-privileged PostgreSQL roles; hardening is tracked in [#63](https://github.com/mycaravam-crypto/datawizz/issues/63).
+**Single-user development use only.** HTTP has no authentication; never publish it publicly. The application executes arbitrary SQL with the configured database role's privileges. Use a minimally privileged role and a trusted database.
 
-PostgreSQL TLS with verified certificate chain and hostname is opt-in through `DATABASE_TLS=verify-full`. The default `disable` is intended only for trusted local development. The row limit caps response memory, not the work performed inside PostgreSQL: extra rows may be consumed until completion or timeout. The application opens a DB connection per request. Server-defined profiles, explicit switching, read-only profile modes and a bounded ER overview are supported. Query history is session-only; explicit saved scripts use unencrypted browser storage. Basic SQL suggestions are available, but rich syntax highlighting is not. Multi-statement scripts, secure remote administration, native backup/restore, full schema diff and direct privileged administration dialogs remain unsupported; see [#59](https://github.com/mycaravam-crypto/datawizz/issues/59), [#65](https://github.com/mycaravam-crypto/datawizz/issues/65) and [#70](https://github.com/mycaravam-crypto/datawizz/issues/70).
+PostgreSQL TLS with certificate and hostname verification is opt-in via `DATABASE_TLS=verify-full`. The default `disable` is for local development only. Do not use plaintext database or HTTP connections across untrusted networks. The row limit caps response memory, not the work performed inside PostgreSQL: extra rows are consumed and discarded until completion or timeout. The application opens a DB connection per request. It does not implement multiple connection profiles, multi-statement scripts, autocomplete, query history, secure remote administration, backup/restore or write-capable administration dialogs. The catalog is read-only and SQL templates are manual-review-only.
 
-CI covers frontend checks, browser smoke, Docker/Compose UI verification, PostgreSQL integration and live browser/PostgreSQL E2E. Remaining format-gate, lifecycle and accessibility checks are tracked in [#6](https://github.com/mycaravam-crypto/datawizz/issues/6).
+The CI Docker build passed on the initial MVP. The new Compose PostgreSQL smoke test still requires local verification. Follow issues #1-#6.

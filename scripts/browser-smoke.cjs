@@ -10,9 +10,12 @@ let delayNextBrowse = false;
 let releaseBrowse = null;
 const server = http.createServer(async (req, res) => {
   res.setHeader("Content-Type", "application/json; charset=utf-8");
-  if (req.url === "/") {
+  if (req.url === "/" || req.url.startsWith("/?")) {
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.end(html);
+  } else if (req.url === "/assets/sql-editor.js") {
+    res.setHeader("Content-Type","application/javascript; charset=utf-8");
+    res.end(fs.readFileSync("web/vendor/sql-editor.js","utf8"));
   } else if (req.url === "/api/admin") {
     res.end(JSON.stringify({
       databases:[{name:"test",owner:"test",allow_connections:true}],
@@ -111,7 +114,7 @@ const server = http.createServer(async (req, res) => {
   try {
     const page=await browser.newPage({viewport:{width:1280,height:800},acceptDownloads:true});
     const origin="http://127.0.0.1:"+server.address().port;
-    await page.goto(origin);
+    await page.goto(origin+"?basic-editor=1");
     await page.getByRole("heading",{name:"SQL Workbench"}).waitFor();
     const originalSQL=await page.locator("#sql").inputValue();
     await page.getByRole("button",{name:/New tab/}).click();
@@ -500,6 +503,62 @@ const server = http.createServer(async (req, res) => {
     assert.match(await page.locator("#er-accessible").textContent(),/fk_<img src=x onerror=alert\(1\)>/);
     assert.equal(await page.locator("#connection-chooser").isDisabled(),true,
       "Single-profile default preserves the no-switch behavior");
+    // Rich editor is the default. PostgreSQL highlighting and key bindings remain offline.
+    const rich=await browser.newPage({viewport:{width:1280,height:800},acceptDownloads:true});
+    const richErrors=[];
+    rich.on("console",message=>{if(["warning","error"].includes(message.type()))richErrors.push(message.text())});
+    rich.on("pageerror",error=>richErrors.push(error.message));
+    try{
+      await rich.goto(origin);
+      const mode=await rich.evaluate(()=>({
+        editor:typeof window.DataWizzEditor,
+        hidden:document.getElementById("sql-rich").hidden,
+        html:document.getElementById("sql-rich").children.length,
+        basic:new URLSearchParams(location.search).has("basic-editor")
+      }));
+      assert.equal(mode.editor,"object","Editor bundle not available: "+JSON.stringify({mode,richErrors}));
+      assert.equal(mode.html>0,true,"Editor failed to initialize: "+JSON.stringify({mode,richErrors}));
+      await rich.locator("#sql-rich .cm-editor").waitFor({state:"visible"});
+      assert.equal(await rich.locator("#sql").isVisible(),false);
+      assert((await rich.locator("#sql-rich .cm-gutters").count())>=1,
+        "Rich editor must show line numbers");
+      const edit=rich.locator("#sql-rich .cm-content");
+      await edit.click();
+      await rich.keyboard.press("ControlOrMeta+A");
+      await rich.keyboard.insertText("SELECT 7");
+      assert.equal(await rich.evaluate(()=>document.getElementById("sql").value),"SELECT 7");
+      await rich.keyboard.press("ControlOrMeta+Enter");
+      await rich.waitForFunction(() => document.getElementById("sql-history-count").textContent.includes("History: 1"));
+      assert.equal((await rich.evaluate(()=>document.getElementById("sql").value)),"SELECT 7");
+      await rich.locator("#sql-productivity").evaluate(el=>el.open=true);
+      await rich.locator("#sql").evaluate(el=>el.value="SEL");
+      assert.equal(await rich.evaluate(()=>document.getElementById("sql").value),"SEL");
+      await edit.click();
+      await rich.keyboard.press("ControlOrMeta+Space");
+      await rich.locator(".cm-tooltip-autocomplete").waitFor({state:"visible"});
+      // Draft storage is off until the user explicitly opts in.
+      assert.equal(await rich.evaluate(()=>localStorage.getItem("datawizz.sql-draft.v1.default")),null);
+      rich.once("dialog",dialog=>dialog.accept());
+      await rich.locator("#sql-draft-consent").check();
+      await rich.waitForFunction(()=>Boolean(localStorage.getItem("datawizz.sql-draft.v1.default")));
+      await rich.locator("#sql").evaluate(el=>el.value="SELECT 'recovery'");
+      await rich.waitForFunction(()=>{
+        const x=JSON.parse(localStorage.getItem("datawizz.sql-draft.v1.default")||"null");
+        return x?.tabs?.some(t=>t.sql==="SELECT 'recovery'");
+      });
+      await rich.reload();
+      await rich.locator("#sql-rich .cm-editor").waitFor({state:"visible"});
+      assert.notEqual(await rich.evaluate(()=>document.getElementById("sql").value),"SELECT 'recovery'",
+        "Restore must never happen without a user action");
+      rich.once("dialog",dialog=>dialog.accept());
+      await rich.locator("#sql-productivity").evaluate(el=>el.open=true);
+      await rich.locator("#sql-draft-restore").click();
+      assert.equal(await rich.evaluate(()=>document.getElementById("sql").value),"SELECT 'recovery'");
+      rich.once("dialog",dialog=>dialog.accept());
+      await rich.locator("#sql-draft-clear").click();
+      assert.equal(await rich.evaluate(()=>localStorage.getItem("datawizz.sql-draft.v1.default")),null);
+      assert.equal(await rich.evaluate(()=>localStorage.getItem("datawizz.sql-draft-opt-in.v1.default")),null);
+    }finally{await rich.close()}
     console.log("Chromium workbench UI smoke tests passed");
   } finally {await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1}).finally(()=>server.close());

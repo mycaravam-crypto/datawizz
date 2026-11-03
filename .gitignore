@@ -3,3 +3,6 @@ target/
 compose.override.yaml
 certs/*
 !certs/.gitkeep
+
+# Offline editor bundle is built from pinned npm packages.
+node_modules/
