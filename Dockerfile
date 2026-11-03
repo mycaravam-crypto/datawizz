@@ -2,8 +2,21 @@
 # The editor is compiled only at image build time; runtime needs no Node or CDN.
 FROM node:22-bookworm AS editor-builder
 WORKDIR /editor
-COPY package.json ./
-RUN npm install --no-audit --no-fund
+# Keep npm's dependency layer independent from changing application sources.
+COPY package.json package-lock.json ./
+# Reuse downloaded npm packages across uncached builds. The optional PEM
+# certificates are trusted only during this build step, not in the runtime.
+RUN --mount=type=cache,id=datawizz-npm,target=/root/.npm,sharing=locked \
+    --mount=type=bind,source=certs,target=/tmp/corporate-certs,readonly \
+    set -eu; \
+    ca_bundle=/tmp/datawizz-node-extra-ca.pem; \
+    for cert in /tmp/corporate-certs/*.crt /tmp/corporate-certs/*.pem; do \
+      [ -f "$cert" ] || continue; \
+      cat "$cert" >> "$ca_bundle"; \
+      echo >> "$ca_bundle"; \
+    done; \
+    if [ -s "$ca_bundle" ]; then export NODE_EXTRA_CA_CERTS="$ca_bundle"; fi; \
+    npm ci --prefer-offline --no-audit --no-fund
 COPY scripts/build-editor.cjs ./scripts/build-editor.cjs
 COPY web/editor-entry.js ./web/editor-entry.js
 RUN npm run build:editor

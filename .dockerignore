@@ -1,8 +1,11 @@
 target
+node_modules
+**/node_modules
+.npm
 .git
 .env
 *.log
-# Only PEM certificates are required for the local Rust builder.
+# Only PEM certificates are required for the local Node and Rust builders.
 certs/*
 !certs/*.crt
 !certs/*.pem

@@ -76,7 +76,7 @@ is serving it. There is no runtime HTML bind mount in the release image.
 
 ## Corporate TLS interception during Docker build
 
-Place any required **PEM-encoded** corporate root/intermediate CA certificates in `certs/`, using `.crt` or `.pem` extensions. Multiple files are supported. The certificates are mounted only in a Docker BuildKit build step and included in the builder trust store, **not in the final runtime image**. The directory is ignored by Git except for `certs/.gitkeep`.
+Place any required **PEM-encoded** corporate root/intermediate CA certificates in `certs/`, using `.crt` or `.pem` extensions. Multiple files are supported. Docker BuildKit mounts these certificates only during dependency setup: they are passed to npm through `NODE_EXTRA_CA_CERTS` in the Node editor builder and installed in the Rust builder trust store. They are **not copied into the final runtime image**. The directory is ignored by Git except for `certs/.gitkeep`.
 
 Build with either command (no extra secret or override configuration required):
 ```sh
@@ -84,7 +84,9 @@ docker build -t datawizz:local .
 docker compose up --build
 ```
 
-If certificates are installed or replaced, use `docker compose build --no-cache app` to force the CA setup to run again. This is for TLS interception when downloading Rust crates; PostgreSQL traffic still uses `NoTls`. Never disable certificate verification or commit your certificates.
+If certificates are installed or replaced, use `docker compose build --no-cache --progress=plain app` to rerun both dependency steps. This is for TLS interception when downloading npm packages and Rust crates; it does not change the database connection's TLS mode. Never disable certificate verification or commit your certificates.
+
+The editor dependencies are locked in `package-lock.json` and installed with `npm ci`. A BuildKit cache mount reuses downloaded npm packages across local builds, including when application source files change. For diagnosing slow downloads, use `docker compose build --progress=plain app` to see the complete npm output; on a fresh host the registry must still be reachable.
 
 ## Build using Docker (no local Cargo)
 
