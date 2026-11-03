@@ -14,6 +14,9 @@ const headers={Authorization:"Bearer 0123456789abcdefghijklmnopqrstuvwxyz"};
  const active=await fetch(base+"/profiles/managed-qa/api/connection-status",{headers});
  assert.equal(active.status,200);
  const status=await active.json();
+ const {statSync}=require('node:fs');
+ const store=statSync(process.env.DATAWIZZ_PROFILE_STORE);
+ assert.equal(store.mode & 0o777,0o600,'Profile file must have 0600 permissions');
  assert.equal(status.database,"datawizz_profile_test");
  assert.equal(status.read_only,true);
 
