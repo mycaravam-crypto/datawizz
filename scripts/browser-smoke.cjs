@@ -17,7 +17,9 @@ const server = http.createServer(async (req, res) => {
     res.end(JSON.stringify({
       databases:[{name:"test",owner:"test",allow_connections:true}],
       roles:[{name:"<img src=x onerror=alert(1)>",can_login:false,superuser:false,create_db:false,create_role:false}],
-      memberships:[],sessions:[],extensions:[],schemas:[],relations:[],indexes:[],
+      memberships:[],sessions:[],extensions:[],schemas:[],
+      relations:[{schema:"public",name:"demo_view",kind:"view",owner:"test",estimated_rows:0,size_bytes:0,definition:"SELECT id FROM public.demo"}],
+      indexes:[{schema:"public",table:"demo",name:"demo_idx",valid:true,scans:0,definition:"CREATE INDEX demo_idx ON public.demo USING btree (id)"}],
       constraints:[],table_stats:[],locks:[],settings:[],privileges:[],routines:[]
     }));
   } else if (req.url === "/api/schema") {
@@ -69,7 +71,14 @@ const server = http.createServer(async (req, res) => {
   } else if (req.url === "/api/query") {
     let body=""; for await(const chunk of req) body += chunk;
     const statement=JSON.parse(body).sql;
-    res.end(JSON.stringify({columns:["value"],column_types:["text"],rows:[[statement],[null],["alpha"]],affected:0,truncated:false,duration_ms:3}));
+    if(/^EXPLAIN\s*\(FORMAT JSON\)/i.test(statement)){
+      const plan=[{Plan:{"Node Type":"Aggregate","Total Cost":2.3,"Plan Rows":1,
+        Plans:[{"Node Type":"Seq Scan","Relation Name":"demo","Total Cost":1.5}]}}];
+      res.end(JSON.stringify({columns:["QUERY PLAN"],column_types:["text"],
+        rows:[[JSON.stringify(plan)]],affected:0,truncated:false,duration_ms:2}));
+    }else{
+      res.end(JSON.stringify({columns:["value"],column_types:["text"],rows:[[statement],[null],["alpha"]],affected:0,truncated:false,duration_ms:3}));
+    }
   } else {res.writeHead(404);res.end("{}");}
 });
 (async () => {
@@ -242,7 +251,20 @@ const server = http.createServer(async (req, res) => {
     await page.locator("#admin-section-search").fill("");
     await page.locator("#admin-nav-indexes").click();
     assert.equal(await page.locator("#admin-view-title").textContent(),"Indexes");
-    assert.equal(await page.locator("#admin-output .grid").count(),0);
+    assert.equal(await page.locator("#admin-output .grid").count(),1);
+    await page.locator("#admin-output tbody tr").first().click();
+    assert.match(await page.locator("#admin-detail .admin-ddl-preview").textContent(),/CREATE INDEX demo_idx/);
+    let previewPosted=false;
+    await page.route("**/api/query",route=>{previewPosted=true;return route.continue()});
+    await page.locator("#admin-detail").getByRole("button",{name:"Open DDL in SQL console"}).click();
+    assert.equal(previewPosted,false,"Opening DDL must not execute SQL");
+    assert.equal(await page.locator("#workspace-tab-sql").getAttribute("aria-selected"),"true");
+    assert.match(await page.locator("#sql").inputValue(),/^CREATE INDEX demo_idx/);
+    await page.unroute("**/api/query");
+    await page.locator("#workspace-tab-admin").click();
+    await page.locator("#admin-nav-relations").click();
+    await page.locator("#admin-output tbody tr").first().click();
+    assert.match(await page.locator("#admin-detail .admin-ddl-preview").textContent(),/^CREATE VIEW "public"."demo_view" AS/);
     await page.setViewportSize({width:700,height:800});
     const compactNav=await page.locator(".admin-explorer").boundingBox();
     const compactStage=await page.locator(".admin-stage").boundingBox();
@@ -291,6 +313,24 @@ const server = http.createServer(async (req, res) => {
     await page.locator("#admin-generate").click();
     assert.equal(await page.locator("#admin-sql-preview").textContent(),
       'CREATE INDEX "orders_customer_idx" ON "public"."orders" ("customer_id");');
+    await page.locator("#admin-task").selectOption("foreignkey-add");
+    for(const [i,value] of ["public","orders","customer_id","customers","id"].entries())
+      await page.locator("#admin-field-"+i).fill(value);
+    await page.locator("#admin-generate").click();
+    assert.equal(await page.locator("#admin-sql-preview").textContent(),
+      'ALTER TABLE "public"."orders" ADD FOREIGN KEY ("customer_id") REFERENCES "public"."customers" ("id");');
+    await page.locator("#admin-task").selectOption("column-set-default");
+    for(const [i,value] of ["public","orders","label","O'Reilly'; DROP TABLE orders; --"].entries())
+      await page.locator("#admin-field-"+i).fill(value);
+    await page.locator("#admin-generate").click();
+    assert.equal(await page.locator("#admin-sql-preview").textContent(),
+      'ALTER TABLE "public"."orders" ALTER COLUMN "label" SET DEFAULT \'O\'\'Reilly\'\'; DROP TABLE orders; --\';');
+    await page.locator("#admin-task").selectOption("table-comment");
+    for(const [i,value] of ["public","orders","Pilot's table"].entries())
+      await page.locator("#admin-field-"+i).fill(value);
+    await page.locator("#admin-generate").click();
+    assert.equal(await page.locator("#admin-sql-preview").textContent(),
+      'COMMENT ON TABLE "public"."orders" IS \'Pilot\'\'s table\';');
     await page.locator("#admin-task").selectOption("session-terminate");
     await page.locator("#admin-field-0").fill("12); DROP TABLE x;");
     await page.locator("#admin-generate").click();
@@ -332,6 +372,14 @@ const server = http.createServer(async (req, res) => {
     assert.equal(await page.locator("#admin-csv-open").isDisabled(),true,"Invalid CSV row width must be rejected");
     assert.match(await page.locator("#admin-csv-status").textContent(),/different column count/);
     await page.unroute("**/api/query");
+    await page.locator("#workspace-tab-sql").click();
+    await page.locator("#sql").fill("EXPLAIN (FORMAT JSON) SELECT * FROM public.demo;");
+    await page.locator("#run").click();
+    await page.locator("#output .plan-view .plan-node").first().waitFor();
+    assert.deepEqual(await page.locator("#output .plan-view .plan-node").allTextContents(),
+      ["Aggregate","Seq Scan · demo"]);
+    assert.match(await page.locator("#output .plan-view").textContent(),/Total Cost: 2.3/);
+    assert.equal(await page.locator("#output img").count(),0,"Plan text is not HTML");
     console.log("Chromium workbench UI smoke tests passed");
   } finally {await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1}).finally(()=>server.close());

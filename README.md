@@ -131,7 +131,11 @@ The administration view loads a read-only catalog snapshot on demand:
 database and role metadata, memberships, sessions (without SQL text or client
 addresses), extensions, schemas, relations and sizes, index validity/usage,
 constraints, table scan/vacuum statistics, relation locks, safe server settings,
-visible table grants and routine signatures. Each category returns at most 100
+visible table grants and routine signatures. The detail inspector also shows
+PostgreSQL's actual index definitions, view SELECT definitions and constraint
+definitions, where applicable; **Open DDL in SQL console** only creates an
+editor draft. It does not execute the definition. It is not a complete CREATE
+TABLE reverse-engineering feature. Each category returns at most 100
 items. Fixed read-only PostgreSQL catalog queries never expose password
 hashes or arbitrary configuration values.
 
@@ -144,6 +148,8 @@ for common tasks:
   schema, table or database privileges.
 - Operations: analyze, vacuum, reindex, cancel a query, terminate a session,
   create/drop an extension.
+- Additional reviewed DDL: same-schema foreign keys, NOT NULL, literal column
+  defaults, schema ownership/rename, view/index rename and table/column comments.
 
 Identifiers are quoted, privileges selected from fixed allowlists, and process
 IDs validated. The generated SQL is **never executed or posted by the builder**.
@@ -153,9 +159,10 @@ explicit click on **Run query**. PostgreSQL privileges govern execution.
 Some commands (for example DROP DATABASE) cannot be run against the active
 database, and DB permissions/locks may reject them.
 
-**Security limitation:** This remains a **single-user development application**,
-with no HTTP authentication or PostgreSQL TLS. Use only on a trusted loopback
-network. The SQL editor already supports arbitrary permitted SQL. The SQL
+**Security limitation:** This remains a **single-user development application**.
+A bearer token and verified PostgreSQL TLS are available by explicit
+configuration, but the default Docker environment is for trusted local use only.
+Do not expose plain HTTP or database connections to untrusted networks. The SQL editor already supports arbitrary permitted SQL. The SQL
 builder does not bypass or elevate database rights. Direct write-capable admin
 endpoints, server configuration changes and remote operation remain blocked
 pending the security prerequisites in
@@ -194,9 +201,11 @@ migration, or automatic backup/restore.
 
 Use **Explain SQL** in the SQL console to prepare `EXPLAIN (FORMAT JSON)` in
 a separate tab. The plan is not requested until you explicitly click Run query.
-The tool deliberately does not use `ANALYZE`, because that would actually
-execute the underlying statement. Full plan visualization and safe native
-`pg_dump`/`pg_restore` workflows remain in #65.
+Returned plans appear as a bounded, expandable **node tree**, including
+node type, relation, estimated rows and costs; the raw JSON result remains
+visible. The tool deliberately does not use `ANALYZE`, because that would
+actually execute the underlying statement. Rich graphical plan tooling,
+schema diff and safe native `pg_dump`/`pg_restore` workflows remain in #65.
 
 ## Configuration
 
