@@ -27,6 +27,7 @@ done
 [[ "$(request)" == 200 ]]
 [[ "$(request -H 'Origin: https://datawizz.example.com')" == 200 ]]
 [[ "$(request -H 'Origin: https://untrusted.example.net')" == 403 ]]
+[[ "$(request -H 'Host: hostile.example.net')" == 421 ]]
 headers=$(curl --noproxy '*' -ksSI --resolve datawizz.example.com:443:127.0.0.1 https://datawizz.example.com/)
 grep -qi 'strict-transport-security:' <<<"$headers"
 grep -qi 'x-content-type-options: nosniff' <<<"$headers"
