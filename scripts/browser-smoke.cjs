@@ -38,8 +38,24 @@ const server = http.createServer(async (req, res) => {
       await new Promise(resolve=>{releaseBrowse=resolve});
       releaseBrowse = null;
     }
-    const offset = Number(new URL(req.url,"http://localhost").searchParams.get("offset")||0);
-    res.end(JSON.stringify({columns:["id","label"],rows:[[String(offset+1),"original"]],offset,limit:100,has_next:offset===0,stable_order:true}));
+    const params=new URL(req.url,"http://localhost").searchParams;
+    const offset=Number(params.get("offset")||0),limit=Number(params.get("limit")||100);
+    if(params.has("filter")||params.has("sort_column")){
+      assert.equal(params.get("table"),"demo","Filter and export must target the selected relation");
+      const filter=params.get("filter")||"";
+      if(filter==="many"){
+        const rows=Array.from({length:limit},(_,i)=>[String(offset+i+1),"many-"+(offset+i+1)]);
+        res.end(JSON.stringify({columns:["id","label"],rows,offset,limit,has_next:true,stable_order:true}));
+      }else{
+        let data=[["1","Alpha_One"],["2","Beta%Two"],["3","alpha_Three"],["4","=1+1"]];
+        if(params.has("filter"))data=data.filter(row=>row[1].toLowerCase().includes(filter.toLowerCase()));
+        if(params.get("sort_column")==="label")
+          data.sort((a,b)=>params.get("sort_dir")==="desc"?b[1].localeCompare(a[1]):a[1].localeCompare(b[1]));
+        res.end(JSON.stringify({columns:["id","label"],rows:data.slice(offset,offset+limit),offset,limit,has_next:offset+limit<data.length,stable_order:true}));
+      }
+    }else{
+      res.end(JSON.stringify({columns:["id","label"],rows:[[String(offset+1),"original"]],offset,limit:100,has_next:offset===0,stable_order:true}));
+    }
   } else if (req.url === "/api/row-change") {
     let body=""; for await(const chunk of req) body+=chunk;
     const payload=JSON.parse(body);
@@ -427,6 +443,44 @@ const server = http.createServer(async (req, res) => {
     const stored=await page.evaluate(()=>JSON.parse(localStorage.getItem("datawizz.saved-sql.v1")));
     assert.deepEqual(stored.scripts,[]);
     await page.unroute("**/api/query");
+    // Data Explorer 2.0: database-side filter/sort, bounded full export, no SQL write.
+    await page.locator("#filter").fill("");
+    await page.getByRole("button",{name:"Preview public.demo"}).click();
+    await page.locator("#table-filter-column").waitFor({state:"visible"});
+    await page.waitForFunction(() => document.querySelectorAll("#table-filter-column option").length>1);
+    await page.locator("#table-filter-column").selectOption("label");
+    await page.locator("#table-filter-value").fill("alpha_");
+    await page.locator("#table-sort-column").selectOption("label");
+    await page.locator("#table-sort-dir").selectOption("desc");
+    const filtered=page.waitForResponse(r=>r.url().includes("/api/table-rows?")&&r.url().includes("filter=alpha_"));
+    await page.locator("#table-apply").click();
+    const filterResponse=await filtered;
+    const query=new URL(filterResponse.url()).searchParams;
+    assert.equal(query.get("filter_column"),"label");
+    assert.equal(query.get("sort_column"),"label");
+    assert.equal(query.get("sort_dir"),"desc");
+    await page.locator("#output").getByText("alpha_Three",{exact:true}).waitFor();
+    assert.equal(await page.locator("#output").getByText("Alpha_One",{exact:true}).count(),1);
+    assert.equal(await page.locator("#output").getByText("Beta%Two",{exact:true}).count(),0);
+    assert.equal(await page.locator("#output .grid tbody tr").count(),2);
+    // Filter a formula-like value; downloaded CSV must be spreadsheet-safe.
+    await page.locator("#table-filter-value").fill("=1+1");
+    await page.locator("#table-apply").click();
+    await page.locator("#output").getByText("=1+1",{exact:true}).waitFor();
+    const downloading=page.waitForEvent("download");
+    await page.locator("#table-export").click();
+    const download=await downloading;
+    const csvBody=fs.readFileSync(await download.path(),"utf8");
+    assert(csvBody.includes('"\'=1+1"'),"CSV must neutralize spreadsheet formulas");
+    assert(csvBody.includes('"id","label"'));
+    // A 1,001+ row export must fail instead of silently truncating or downloading.
+    await page.locator("#table-filter-value").fill("many");
+    await page.locator("#table-apply").click();
+    await page.locator("#output").getByText("many-1",{exact:true}).waitFor();
+    await page.locator("#table-export").click();
+    await page.locator("#message").getByText(/exceeds 1,000 rows/).waitFor();
+    await page.locator("#table-reset").click();
+    await page.locator("#output").getByText("original",{exact:true}).waitFor();
     console.log("Chromium workbench UI smoke tests passed");
   } finally {await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1}).finally(()=>server.close());
