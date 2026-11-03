@@ -43,6 +43,17 @@ const { chromium } = require("playwright");
     await page.locator("#admin-output tbody tr").first().click();
     await page.locator("#admin-detail").getByText("datawizz_browser_e2e").waitFor();
     await page.locator("#admin-sql-nav").click();
+    await page.locator("#admin-task").selectOption("view-create");
+    await page.locator("#admin-field-0").fill("public");
+    await page.locator("#admin-field-1").fill("datawizz_preview_only");
+    await page.locator("#admin-field-2").fill("datawizz_browser_e2e");
+    await page.locator("#admin-generate").click();
+    assert.equal(await page.locator("#admin-sql-preview").textContent(),
+      'CREATE VIEW "public"."datawizz_preview_only" AS SELECT * FROM "public"."datawizz_browser_e2e";');
+    // No view is created by generating the statement.
+    const viewCheck=await page.request.get("http://127.0.0.1:3188/api/schema",
+      {headers:{Authorization:"Bearer 0123456789abcdefghijklmnopqrstuvwxyz"}});
+    assert(!(await viewCheck.json()).some(obj=>obj.name==="datawizz_preview_only"));
     await page.locator("#admin-task").selectOption("table-grant");
     await page.locator("#admin-field-0").fill("public");
     await page.locator("#admin-field-1").fill("datawizz_browser_e2e");

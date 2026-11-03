@@ -273,6 +273,24 @@ const server = http.createServer(async (req, res) => {
     await page.locator("#admin-field-0").fill('bad"; DROP ROLE admin; --');
     await page.locator("#admin-generate").click();
     assert.equal(await page.locator("#admin-sql-preview").textContent(),'CREATE ROLE "bad""; DROP ROLE admin; --" NOLOGIN;');
+    await page.locator("#admin-task").selectOption("column-add");
+    await page.locator("#admin-field-0").fill("public");
+    await page.locator("#admin-field-1").fill("orders");
+    await page.locator("#admin-field-2").fill('new"field');
+    await page.locator("#admin-field-3").fill("JSONB");
+    await page.locator("#admin-generate").click();
+    assert.equal(await page.locator("#admin-sql-preview").textContent(),
+      'ALTER TABLE "public"."orders" ADD COLUMN "new""field" JSONB;');
+    await page.locator("#admin-field-3").fill("text); DROP TABLE orders; --");
+    await page.locator("#admin-generate").click();
+    assert.equal(await page.locator("#admin-open-sql").isDisabled(),true,
+      "SQL type inputs must be restricted to an allowlist");
+    await page.locator("#admin-task").selectOption("index-create");
+    for(const [i,value] of ["public","orders","orders_customer_idx","customer_id"].entries())
+      await page.locator("#admin-field-"+i).fill(value);
+    await page.locator("#admin-generate").click();
+    assert.equal(await page.locator("#admin-sql-preview").textContent(),
+      'CREATE INDEX "orders_customer_idx" ON "public"."orders" ("customer_id");');
     await page.locator("#admin-task").selectOption("session-terminate");
     await page.locator("#admin-field-0").fill("12); DROP TABLE x;");
     await page.locator("#admin-generate").click();
