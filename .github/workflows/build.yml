@@ -95,6 +95,7 @@ jobs:
       PGPASSWORD: test_only_password
       PORT: '3188'
       DATAWIZZ_ACCESS_TOKEN: 0123456789abcdefghijklmnopqrstuvwxyz
+      DATABASE_PROFILES_JSON: '[{"id":"sandbox","label":"Sandbox","url":"postgres://datawizz_test:test_only_password@127.0.0.1:5432/datawizz_profile_test","environment":"test","read_only":true}]'
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -107,9 +108,11 @@ jobs:
           sudo apt-get install -y postgresql-client
           npm install --no-save --package-lock=false playwright@1.56.1
           npx playwright install --with-deps chromium
-      - name: Seed PostgreSQL test table
+      - name: Seed isolated PostgreSQL profiles and FK graph
         run: |
-          psql -h 127.0.0.1 -U datawizz_test -d datawizz_test -v ON_ERROR_STOP=1 -c "CREATE TABLE public.datawizz_browser_e2e (id integer PRIMARY KEY, label text); INSERT INTO public.datawizz_browser_e2e VALUES (1,'before');"
+          psql -h 127.0.0.1 -U datawizz_test -d datawizz_test -v ON_ERROR_STOP=1 -c "CREATE DATABASE datawizz_profile_test"
+          psql -h 127.0.0.1 -U datawizz_test -d datawizz_profile_test -v ON_ERROR_STOP=1 -c "CREATE TABLE public.profile_only (id integer PRIMARY KEY, label text); INSERT INTO public.profile_only VALUES (1,'sandbox-only');"
+          psql -h 127.0.0.1 -U datawizz_test -d datawizz_test -v ON_ERROR_STOP=1 -c "CREATE TABLE public.datawizz_browser_e2e (id integer PRIMARY KEY, label text); INSERT INTO public.datawizz_browser_e2e VALUES (1,'before'); CREATE TABLE public.datawizz_er_child (id integer PRIMARY KEY, parent_id integer REFERENCES public.datawizz_browser_e2e(id));"
       - name: Start Rust application
         run: |
           cargo run > /tmp/datawizz-e2e.log 2>&1 &

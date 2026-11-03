@@ -198,6 +198,67 @@ const { chromium } = require("playwright");
     assert(fs.readFileSync(await download.path(),"utf8").includes("after-dialog"));
     await page.locator("#table-reset").click();
     await page.locator("#output").getByText("after-dialog",{exact:true}).waitFor();
-    console.log("Real PostgreSQL browser editing, EXPLAIN and filtering passed");
+    // Two physical databases: routes are isolated even with the same bearer token.
+    const headers={Authorization:"Bearer 0123456789abcdefghijklmnopqrstuvwxyz"};
+    const base="http://127.0.0.1:3188";
+    const profiles=await page.request.get(base+"/api/connections",{headers});
+    assert.equal(profiles.status(),200);
+    const profileList=await profiles.json();
+    assert.deepEqual(profileList.map(p=>p.id),["default","sandbox"]);
+    assert(!JSON.stringify(profileList).includes("postgres://"));
+    assert.equal(profileList[1].read_only,true);
+    const sandbox=await page.request.get(base+"/profiles/sandbox/api/connection-status",{headers});
+    assert.equal(sandbox.status(),200);
+    assert.equal((await sandbox.json()).database,"datawizz_profile_test");
+    const otherObjects=await page.request.get(base+"/profiles/sandbox/api/schema",{headers});
+    assert.equal(otherObjects.status(),200);
+    const inSandbox=await otherObjects.json();
+    assert(inSandbox.some(o=>o.name==="profile_only"));
+    assert(!inSandbox.some(o=>o.name==="datawizz_browser_e2e"));
+    const defaultObjects=await page.request.get(base+"/api/schema",{headers});
+    assert(!(await defaultObjects.json()).some(o=>o.name==="profile_only"));
+    const missing=await page.request.get(base+"/profiles/other/api/schema",{headers});
+    assert.equal(missing.status(),404);
+    const deniedInsert=await page.request.post(base+"/profiles/sandbox/api/row-insert",
+      {headers,data:{schema:"public",table:"profile_only",fields:[]}});
+    assert.equal(deniedInsert.status(),403);
+    const deniedWrite=await page.request.post(base+"/profiles/sandbox/api/query",
+      {headers,data:{sql:"INSERT INTO public.profile_only VALUES (2, 'forbidden')"}});
+    assert.equal(deniedWrite.status(),400);
+    assert.match((await deniedWrite.json()).error,/25006/);
+    const readResult=await page.request.post(base+"/profiles/sandbox/api/query",
+      {headers,data:{sql:"SELECT label FROM public.profile_only WHERE id=1"}});
+    assert.equal(readResult.status(),200);
+    assert.equal((await readResult.json()).rows[0][0],"sandbox-only");
+    const fk=await page.request.get(base+"/api/relationships",{headers});
+    assert.equal(fk.status(),200);
+    assert((await fk.json()).some(e=>e.from_table==="datawizz_er_child" &&
+      e.to_table==="datawizz_browser_e2e"));
+
+    // Profile switching discards the in-memory editor, history and metadata.
+    await page.locator("#workspace-tab-admin").click();
+    await page.locator("#admin-er-nav").click();
+    await page.locator("#er-accessible tbody tr").first().waitFor();
+    assert.match(await page.locator("#er-status").textContent(),/relationships/);
+    await page.locator("#workspace-tab-sql").click();
+    await page.locator("#sql").fill("SELECT 'must not cross profile boundaries'");
+    page.once("dialog",dialog=>dialog.accept());
+    await page.locator("#connection-chooser").selectOption("sandbox");
+    await page.locator("#auth-area").waitFor({state:"visible"});
+    await page.locator("#access-token").fill("0123456789abcdefghijklmnopqrstuvwxyz");
+    await page.locator("#auth-unlock").click();
+    await page.locator("#auth-area").waitFor({state:"hidden"});
+    await page.waitForFunction(()=>
+      document.getElementById("connection-chooser").value==="sandbox" &&
+      document.getElementById("profile-db-status").textContent.includes("datawizz_profile_test"));
+    assert.equal(await page.locator("#connection-chooser").inputValue(),"sandbox");
+    assert.match(await page.locator("#profile-environment").textContent(),/READ ONLY/);
+    assert(!(await page.locator("#sql").inputValue()).includes("must not cross profile boundaries"));
+    assert.equal(await page.locator("#sql-history-list [role=listitem]").count(),0);
+    await page.locator("#objects").getByRole("button",{name:"Preview public.profile_only"}).waitFor();
+    assert.equal(await page.locator("#objects").getByRole("button",{name:/datawizz_browser_e2e/}).count(),0);
+    const erSandbox=await page.request.get(base+"/profiles/sandbox/api/relationships",{headers});
+    assert.deepEqual(await erSandbox.json(),[]);
+    console.log("Real PostgreSQL browser editing, workspace isolation and ER passed");
   } finally {await browser.close()}
 })().catch(e=>{console.error(e);process.exitCode=1});

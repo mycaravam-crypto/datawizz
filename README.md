@@ -4,6 +4,7 @@ Small, fast, local-first PostgreSQL UI written in Rust. One executable; no Node 
 
 ## MVP features
 - Explore readable PostgreSQL tables, views and columns
+- Optional server-defined connection profiles with safe read-only mode and an ER relationship view
 - Execute a single SQL statement (SELECT and permitted writes/DDL)
 - Display bounded results, errors, runtime and affected rows; export loaded rows or up to 1,000 server-filtered table rows as CSV
 - Built-in HTML/JavaScript editor. No user accounts or stored credentials.
@@ -188,6 +189,62 @@ the original local development default. Use TLS for external DB hosts.
 
 Connection switching, session isolation, SSH tunneling and user-specific DB
 permissions remain outside this first security increment.
+
+## Database Workspace profiles and ER relationships (#72)
+
+The **Connection** selector can switch between separately configured PostgreSQL
+profiles. Every profile has immutable server-side routing: a request for
+`/profiles/<id>/api/...` uses that profile's own connection settings, while
+`/api/...` remains the default database for compatibility. The browser
+receives profile **id, label, environment and read-only flag**, never a
+connection URL, database password or TLS trust file. The existing API bearer
+token protects all profile routes.
+
+Optional profile configuration (`DATABASE_PROFILES_JSON`, maximum seven
+additional profiles) is a JSON array:
+
+```sh
+export DATAWIZZ_ACCESS_TOKEN='use-at-least-32-random-characters-here'
+export DATABASE_PROFILES_JSON='[
+  {"id":"staging","label":"Staging","environment":"test",
+   "url":"postgres://readonly_user:password@db:5432/staging",
+   "read_only":true,"tls":"verify-full"}
+]'
+```
+
+These values belong to the **server's secret configuration**, not browser
+storage, a Git repository, logs or client-visible JavaScript. Do not use these
+example credentials. Additional profiles require `DATAWIZZ_ACCESS_TOKEN`
+and are otherwise rejected at startup. Valid ids contain only lowercase
+ASCII letters, digits, hyphens or underscores. Environments are `dev`,
+`test` and `prod`. New profiles default to **read-only**. Production
+profiles **must** enable read-only and `tls: "verify-full"`. An optional
+`ca_file` points to a local PEM CA. TLS hostname verification remains enabled.
+
+Read-only profiles start each request in a PostgreSQL `READ ONLY` transaction,
+and the dedicated row mutation APIs fail with HTTP 403. **A database role
+with only SELECT privileges is still mandatory** for production: server-side
+read-only mode is defense-in-depth, not a replacement for least privilege.
+The initial default `DATABASE_URL` remains writable for local compatibility.
+Switching profiles confirms loss of unsaved edits, then reloads the page.
+Only the nonsensitive selected **profile id** is kept in tab-scoped
+`sessionStorage`; access tokens, query history, loaded rows and editor tabs
+are not persisted across switches. Previously saved scripts remain explicitly
+saved, but are keyed by profile id. Switching requires entering the API token
+again because it is only retained in memory.
+
+The selector also checks the server-side database name/role. Administration
+→ Tools → **ER relationships** renders a bounded, read-only graph based on
+foreign-key metadata (at most 80 constraints and 40 graph nodes) and an
+accessible text table. Only relationships whose source and target tables are
+both readable to the active PostgreSQL role are returned. The graph does not
+generate or execute SQL.
+
+**Limits:** No SSH tunnels, arbitrary user-created runtime profiles, writable
+production profiles, cross-profile query execution, consistent sessions across
+requests, or interactive drag-and-drop schema modeling. Use HTTPS and
+external access control before exposing this application outside trusted
+loopback networking. The default Docker Compose setup remains local-only.
 
 ## SQL productivity (first increment of #70)
 
