@@ -20,6 +20,13 @@ jobs:
           node scripts/check-ui.cjs
           node --check web/vendor/sql-editor.js
 
+  remote-proxy-security:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate HTTPS proxy, Origin restrictions and security headers
+        run: bash scripts/test-nginx-security.sh
+
   browser-tests:
     # Playwright 1.56 does not support Ubuntu 26.04 (ubuntu-latest on GitHub Actions).
     runs-on: ubuntu-24.04
