@@ -9,6 +9,7 @@ Small, fast, local-first PostgreSQL UI written in Rust. One executable; no Node 
 - Built-in HTML/JavaScript editor. No user accounts or stored credentials.
 - PostgreSQL administration inventory: databases, roles/memberships, sessions, extensions, schemas, relations, indexes, constraints, table statistics, locks, safe server settings, visible table privileges and routines (max 100 entries per section).
 - Guided administration SQL templates for roles, memberships, schemas, table/database grants, database lifecycle, session control and maintenance; generated statements open in a separate editor tab and never run automatically.
+- SQL productivity: bounded session-only query history, manually saved browser scripts, and Ctrl+Space completion from loaded PostgreSQL metadata.
 
 ## Quick start: disposable test PostgreSQL (recommended)
 
@@ -187,6 +188,31 @@ the original local development default. Use TLS for external DB hosts.
 
 Connection switching, session isolation, SSH tunneling and user-specific DB
 permissions remain outside this first security increment.
+
+## SQL productivity (first increment of #70)
+
+The SQL console includes a collapsible **Query history & saved scripts** panel.
+
+- **History** records the last 40 attempted executions (success/failure, execution time,
+  SQL and available duration). It is searchable, kept **only in memory** and cleared
+  when the page is refreshed or closed. Opening a history entry creates a new editor
+  tab; it does not re-run the statement. Statements over 16,000 characters are
+  deliberately not saved as incomplete history entries.
+- **Saved scripts** are stored **only when you explicitly choose Save locally and
+  confirm**. Up to 20 named scripts (16 KiB each) are kept in this browser's
+  unencrypted `localStorage` at the application origin. They remain accessible
+  to anyone using that browser profile and may be visible when a different database
+  is configured at the same origin. Do **not** store passwords, tokens or confidential
+  SQL. Scripts can be reopened in a new tab or deleted, neither action executes SQL.
+- **SQL completion:** Press `Ctrl+Space` or `Cmd+Space` within the existing
+  editor to get SQL keyword and visible schema/table/column suggestions. Use arrows
+  and Enter/Tab or click a suggestion; Escape dismisses it. Suggestions are drawn
+  only from metadata already loaded by the normal explorer, without a new API call.
+
+The textarea remains the editor for now. An offline-bundled, accessible editor with
+syntax highlighting and richer parser-backed completion, plus optional explicitly
+consented draft recovery, are still open under #70. No network CDN, hidden query
+persistence, browser extension or new runtime dependency was introduced.
 
 ## Bounded CSV import and EXPLAIN preview
 

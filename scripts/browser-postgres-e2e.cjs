@@ -149,6 +149,18 @@ const { chromium } = require("playwright");
     await page.locator("#output .plan-view .plan-node").first().waitFor();
     assert.match(await page.locator("#output .plan-view").textContent(),/Scan/);
     assert.equal(await page.locator("#output img").count(),0);
+    // History is local session state; reopening cannot re-execute SQL on the DB.
+    await page.locator("#sql-productivity").evaluate(el=>el.open=true);
+    await page.locator("#sql-history-search").fill("EXPLAIN (FORMAT JSON)");
+    await page.locator("#sql-history-list [role=listitem]").first().waitFor();
+    let replayRequests=0;
+    await page.route("**/api/query",route=>{replayRequests++;return route.continue()});
+    await page.locator("#sql-history-list [role=listitem]").first().getByRole("button",{name:"Open"}).click();
+    assert.match(await page.locator("#sql").inputValue(),/^EXPLAIN \(FORMAT JSON\)/);
+    assert.equal(replayRequests,0,"Opening history cannot execute SQL");
+    assert.equal(await page.evaluate(()=>localStorage.getItem("datawizz.saved-sql.v1")),null,
+      "Query history must not be saved to persistent browser storage");
+    await page.unroute("**/api/query");
     console.log("Real PostgreSQL browser editing and EXPLAIN passed");
   } finally {await browser.close()}
 })().catch(e=>{console.error(e);process.exitCode=1});
