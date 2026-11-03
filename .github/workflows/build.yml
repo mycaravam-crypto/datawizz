@@ -115,7 +115,7 @@ jobs:
       PGPASSWORD: test_only_password
       PORT: '3188'
       DATAWIZZ_ACCESS_TOKEN: 0123456789abcdefghijklmnopqrstuvwxyz
-      DATABASE_PROFILES_JSON: '[{"id":"sandbox","label":"Sandbox","url":"postgres://datawizz_test:test_only_password@127.0.0.1:5432/datawizz_profile_test","environment":"test","read_only":true}]'
+      DATABASE_PROFILES_JSON: '[{"id":"sandbox","label":"Sandbox","url":"postgres://datawizz_test:test_only_password@127.0.0.1:5432/datawizz_profile_test","environment":"test","read_only":true},{"id":"reader","label":"Restricted reader","url":"postgres://datawizz_reader:reader_test_password@127.0.0.1:5432/datawizz_test","environment":"test","read_only":false}]'
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -133,6 +133,17 @@ jobs:
           psql -h 127.0.0.1 -U datawizz_test -d datawizz_test -v ON_ERROR_STOP=1 -c "CREATE DATABASE datawizz_profile_test"
           psql -h 127.0.0.1 -U datawizz_test -d datawizz_profile_test -v ON_ERROR_STOP=1 -c "CREATE TABLE public.profile_only (id integer PRIMARY KEY, label text); INSERT INTO public.profile_only VALUES (1,'sandbox-only');"
           psql -h 127.0.0.1 -U datawizz_test -d datawizz_test -v ON_ERROR_STOP=1 -c "CREATE TABLE public.datawizz_browser_e2e (id integer PRIMARY KEY, label text); INSERT INTO public.datawizz_browser_e2e VALUES (1,'before'); CREATE TABLE public.datawizz_er_child (id integer PRIMARY KEY, parent_id integer REFERENCES public.datawizz_browser_e2e(id));"
+      - name: Seed a real restricted PostgreSQL login
+        run: |
+          psql -h 127.0.0.1 -U datawizz_test -d datawizz_test -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE datawizz_reader LOGIN PASSWORD 'reader_test_password';
+          GRANT CONNECT ON DATABASE datawizz_test TO datawizz_reader;
+          GRANT USAGE ON SCHEMA public TO datawizz_reader;
+          GRANT SELECT ON public.datawizz_browser_e2e TO datawizz_reader;
+          CREATE TABLE public.datawizz_private_e2e (id integer PRIMARY KEY, secret text);
+          INSERT INTO public.datawizz_private_e2e VALUES (1, 'not-for-readers');
+          REVOKE ALL ON public.datawizz_private_e2e FROM PUBLIC;
+          SQL
       - name: Build offline CodeMirror editor
         run: npm run build:editor
       - name: Start Rust application
@@ -147,6 +158,8 @@ jobs:
           exit 1
       - name: Chromium real database editing E2E
         run: node scripts/browser-postgres-e2e.cjs
+      - name: Restricted HTTP credential E2E
+        run: node scripts/restricted-http-e2e.cjs
       - name: Log application diagnostics on failure
         if: failure()
         run: cat /tmp/datawizz-e2e.log || true
