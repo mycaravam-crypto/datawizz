@@ -88,6 +88,7 @@ const headers = {Authorization: "Bearer " + token};
   await page.locator("#auth-unlock").click();
   await page.locator("#auth-area").waitFor({state:"hidden"});
   assert.equal(await page.locator("#connection-chooser").inputValue(),"managed-qa");
+  await page.waitForFunction(()=>document.getElementById("profile-db-status").textContent.includes("datawizz_profile_test"));
   assert.match(await page.locator("#profile-db-status").textContent(),/datawizz_profile_test/);
   assert.match(await page.locator("#profile-environment").textContent(),/READ ONLY/);
   console.log("Connection Manager UI, CRUD, authorization and isolated dynamic routing passed");
