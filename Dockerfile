@@ -13,7 +13,7 @@ RUN --mount=type=cache,id=datawizz-npm,target=/root/.npm,sharing=locked \
     for cert in /tmp/corporate-certs/*.crt /tmp/corporate-certs/*.pem; do \
       [ -f "$cert" ] || continue; \
       cat "$cert" >> "$ca_bundle"; \
-      printf '\\n' >> "$ca_bundle"; \
+      echo >> "$ca_bundle"; \
     done; \
     if [ -s "$ca_bundle" ]; then export NODE_EXTRA_CA_CERTS="$ca_bundle"; fi; \
     npm ci --prefer-offline --no-audit --no-fund
