@@ -160,6 +160,26 @@ endpoints, server configuration changes and remote operation remain blocked
 pending the security prerequisites in
 [the administration roadmap](https://github.com/mycaravam-crypto/datawizz/issues/59).
 
+## Optional API access token and verified PostgreSQL TLS
+
+The default loopback-only development mode remains unchanged. Set
+`DATAWIZZ_ACCESS_TOKEN` (at least 32 characters) to protect **all API routes**.
+The browser asks for the token on the first unauthorized response, keeps it only
+in memory and sends it via an `Authorization: Bearer` header. It is never
+stored in localStorage or in URL parameters. This is **not a public deployment
+mode**: a token over plain HTTP can be intercepted. Use a trusted local host,
+or provide HTTPS and access control in an external reverse proxy before any
+remote exposure; never directly publish the service.
+
+Set `DATABASE_TLS=verify-full` to require a certificate-verified PostgreSQL
+TLS connection. The system trust store is used; optionally supply a PEM trust
+anchor at `DATABASE_TLS_CA_FILE`. Hostname verification remains enabled and
+there is no insecure skip-verification mode. `DATABASE_TLS=disable` retains
+the original local development default. Use TLS for external DB hosts.
+
+Connection switching, session isolation, SSH tunneling and user-specific DB
+permissions remain outside this first security increment.
+
 ## Configuration
 
 | Environment | Default | Purpose |
@@ -169,11 +189,14 @@ pending the security prerequisites in
 | `PORT` | `3000` | HTTP port |
 | `MAX_ROWS` | `200` (max `1000`) | UI row limit |
 | `QUERY_TIMEOUT_MS` | `10000` (max `60000`) | PostgreSQL statement timeout |
+| `DATAWIZZ_ACCESS_TOKEN` | unset | Optional API bearer token (at least 32 characters); protects all `/api/` routes |
+| `DATABASE_TLS` | `disable` | `disable` or `verify-full` (verified PostgreSQL TLS) |
+| `DATABASE_TLS_CA_FILE` | unset | PEM CA certificate for the verified TLS connection |
 
 ## Security and limitations
 
 **Single-user development use only.** HTTP has no authentication; never publish it publicly. The application executes arbitrary SQL with the configured database role's privileges. Use a minimally privileged role and a trusted database.
 
-The current PostgreSQL driver uses `NoTls`: **TLS connections are not implemented yet**. Do not use it across untrusted networks. The row limit caps response memory, not the work performed inside PostgreSQL: extra rows are consumed and discarded until completion or timeout. The application opens a DB connection per request. It does not implement multiple connection profiles, multi-statement scripts, autocomplete, query history, secure remote administration, backup/restore or write-capable administration dialogs. The catalog is read-only and SQL templates are manual-review-only.
+PostgreSQL TLS with certificate and hostname verification is opt-in via `DATABASE_TLS=verify-full`. The default `disable` is for local development only. Do not use plaintext database or HTTP connections across untrusted networks. The row limit caps response memory, not the work performed inside PostgreSQL: extra rows are consumed and discarded until completion or timeout. The application opens a DB connection per request. It does not implement multiple connection profiles, multi-statement scripts, autocomplete, query history, secure remote administration, backup/restore or write-capable administration dialogs. The catalog is read-only and SQL templates are manual-review-only.
 
 The CI Docker build passed on the initial MVP. The new Compose PostgreSQL smoke test still requires local verification. Follow issues #1-#6.

@@ -88,7 +88,7 @@
 </style>
 </head>
 <body>
-<header class="topbar"><div class="brand"><span class="logo" aria-hidden="true">⌘</span><span>datawizz</span><span class="tag">PostgreSQL workbench</span></div><div class="top-actions"><label for="connection-chooser" class="eyebrow">Connection</label><select id="connection-chooser" class="input" aria-label="Database connection" style="width:auto;max-width:230px" disabled><option>Loading…</option></select><span class="tag">Local · single user</span><button class="btn small" id="theme" type="button" aria-label="Toggle light and dark theme">☀ / ☾</button></div></header>
+<header class="topbar"><div class="brand"><span class="logo" aria-hidden="true">⌘</span><span>datawizz</span><span class="tag">PostgreSQL workbench</span></div><div class="top-actions"><label for="connection-chooser" class="eyebrow">Connection</label><select id="connection-chooser" class="input" aria-label="Database connection" style="width:auto;max-width:230px" disabled><option>Loading…</option></select><span class="tag">Local · single user</span><label id="auth-area" class="note" for="access-token" hidden>API token <input class="input" id="access-token" type="password" autocomplete="off" style="width:180px" placeholder="Access token"> <button id="auth-unlock" type="button" class="btn small">Unlock</button></label><button class="btn small" id="theme" type="button" aria-label="Toggle light and dark theme">☀ / ☾</button></div></header>
 <div class="app">
 <aside class="sidebar" aria-label="Database navigation">
 <div class="aside-heading"><span class="eyebrow">Explorer</span><button class="btn small" id="refresh" type="button">↻ Refresh</button></div>
@@ -297,7 +297,26 @@ function element(tag,className,content){const e=document.createElement(tag);if(c
 function status(label,type=""){const e=$("status");e.className="status "+type;text(e,label)}
 function info(msg){text(message,msg)}
 function quoted(value){return '"'+value.replaceAll('"','""')+'"'}
-async function api(path,options){const r=await fetch(path,options);const data=await r.json();if(!r.ok){const err=Error(data.error||"Request failed");err.status=r.status;throw err;}return data}
+let accessToken="";
+async function api(path,options){
+ const headers=new Headers(options?.headers||{});
+ if(accessToken)headers.set("Authorization","Bearer "+accessToken);
+ const r=await fetch(path,{...options,headers});
+ const data=await r.json();
+ if(r.status===401){$("auth-area").hidden=false;accessToken="";}
+ if(!r.ok){const err=Error(data.error||"Request failed");err.status=r.status;throw err;}
+ return data;
+}
+$("auth-unlock").onclick=async()=>{
+ accessToken=$("access-token").value;$("access-token").value="";
+ if(!accessToken)return;
+ try{
+  await api("/api/connections");
+  $("auth-area").hidden=true;
+  await loadConnections();await loadObjects();
+ }catch(err){accessToken="";$("auth-area").hidden=false;info("Access denied: "+err.message)}
+};
+$("access-token").addEventListener("keydown",e=>{if(e.key==="Enter")$("auth-unlock").click()});
 async function loadConnections(){
  const chooser=$("connection-chooser");
  try{
