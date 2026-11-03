@@ -14,3 +14,4 @@ futures-util = "0.3"
 native-tls = "0.2"
 postgres-native-tls = "0.5"
 subtle = "2"
+tower = { version = "0.5", features = ["util"] }
