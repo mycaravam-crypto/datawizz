@@ -1,3 +1,5 @@
+mod connection_manager;
+
 use std::{env, sync::Arc, time::Instant};
 
 use axum::{
@@ -24,6 +26,7 @@ struct AppState {
     access_token: Option<Arc<String>>,
     read_only: bool,
     profiles: Arc<Vec<ConnectionOption>>,
+    managed: Option<Arc<connection_manager::ManagedStore>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -223,7 +226,11 @@ fn configured_profiles(raw: &str) -> Result<Vec<ExtraProfile>, String> {
 }
 
 async fn connections(State(state): State<AppState>) -> Json<Vec<ConnectionOption>> {
-    Json((*state.profiles).clone())
+    let mut profiles = (*state.profiles).clone();
+    if let Some(store) = &state.managed {
+        profiles.extend(store.connection_options().await);
+    }
+    Json(profiles)
 }
 
 #[derive(Serialize)]
@@ -1777,6 +1784,12 @@ async fn main() {
         read_only: p.read_only,
     }));
     let profiles = Arc::new(visible);
+    let managed = env::var("DATAWIZZ_PROFILE_STORE").ok()
+        .filter(|path| !path.is_empty()).map(|path| {
+            assert!(access_token.is_some(), "Managed connections require DATAWIZZ_ACCESS_TOKEN");
+            Arc::new(connection_manager::ManagedStore::load(&path, &profiles)
+                .expect("Invalid managed connection store"))
+        });
     let state = AppState {
         url: Arc::new(url),
         max_rows,
@@ -1785,13 +1798,15 @@ async fn main() {
         access_token: access_token.clone(),
         read_only: false,
         profiles: profiles.clone(),
+        managed: managed.clone(),
     };
     // Preserve the existing fail-fast check for the default PostgreSQL connection.
     connect(&state).await.expect("Cannot connect to PostgreSQL");
     let mut app = Router::new()
         .route("/", get(index))
         .route("/assets/sql-editor.js", get(sql_editor_script))
-        .merge(api_routes(state));
+        .merge(api_routes(state.clone()))
+        .merge(connection_manager::routes(state.clone()));
     for profile in extras {
         let tls_mode = profile.tls.as_deref().unwrap_or("disable");
         let tls = verified_pg_tls(tls_mode, profile.ca_file.as_deref())
@@ -1804,6 +1819,7 @@ async fn main() {
             access_token: access_token.clone(),
             read_only: profile.read_only,
             profiles: profiles.clone(),
+            managed: managed.clone(),
         };
         // A static path prefix selects the server-side DB. No client DSN or
         // mutable global "current database" that could cross user requests.
@@ -1811,6 +1827,10 @@ async fn main() {
             &format!("/profiles/{}", profile.id),
             api_routes(profile_state),
         );
+    }
+    if managed.is_some() {
+        app = app.route("/profiles/{id}/{*tail}",
+            axum::routing::any(connection_manager::dispatch).with_state(state.clone()));
     }
     let host = env::var("HOST").unwrap_or_else(|_| "127.0.0.1".into());
     let address = format!("{host}:{port}");
@@ -2224,6 +2244,7 @@ mod tests {
             tls: None,
             access_token: None,
             read_only: false,
+            managed: None,
             profiles: Arc::new(vec![ConnectionOption {
                 id: "default".into(),
                 label: "Default PostgreSQL".into(),
