@@ -371,18 +371,19 @@ fn quote_ident(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
 }
 
-async fn table_rows(
-    State(state): State<AppState>,
-    Query(req): Query<PageRequest>,
-) -> ApiResult<PageResponse> {
-    let offset = req.offset.unwrap_or(0);
-    let limit = req.limit.unwrap_or(100);
-    if !(0..=1_000_000).contains(&offset) || !(1..=200).contains(&limit) {
-        return Err(api_error(StatusCode::BAD_REQUEST, "Invalid offset or page size"));
-    }
-    let client = connect(&state).await?;
-    // Resolve the relation using bound parameters, then use only names from pg_catalog
-    // when constructing safely quoted SQL identifiers.
+// Share one catalog-validated query builder between JSON paging and CSV export.
+// Only identifiers returned by pg_catalog are interpolated into SQL.
+struct PreparedBrowse {
+    columns: Vec<String>,
+    select_sql: String,
+    filter_pattern: Option<String>,
+    stable_order: bool,
+}
+
+async fn prepare_browse(
+    client: &tokio_postgres::Client,
+    req: &PageRequest,
+) -> Result<PreparedBrowse, (StatusCode, Json<ApiError>)> {
     let relation = client.query_opt(
         "SELECT c.oid, n.nspname, c.relname
          FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
@@ -404,8 +405,6 @@ async fn table_rows(
          ORDER BY array_position(i.indkey::smallint[],a.attnum::smallint)",
         &[&oid],
     ).await.map_err(|e| postgres_error(&e))?;
-    // Resolve all user-selected columns against PostgreSQL's catalog before quoting
-    // them; neither filter contents nor sort direction become SQL syntax.
     let column_rows = client.query(
         "SELECT attname::text, atttypid::oid FROM pg_catalog.pg_attribute
          WHERE attrelid = $1 AND attnum > 0 AND NOT attisdropped
@@ -436,7 +435,7 @@ async fn table_rows(
     let predicate = if let (Some(col), Some(_)) = (&req.filter_column, filter) {
         format!(" WHERE {}::text ILIKE $1 ESCAPE '#'", quote_ident(col))
     } else { String::new() };
-    // '#' avoids PostgreSQL backslash escaping ambiguity. Treat %, _, # literally.
+    // A literal case-insensitive substring: %, _ and # are not wildcards.
     let filter_pattern = filter.map(|value| {
         let escaped = value.replace('#', "##").replace('%', "#%").replace('_', "#_");
         format!("%{escaped}%")
@@ -447,7 +446,6 @@ async fn table_rows(
         ordering.push(format!("source.{} {} NULLS LAST", quote_ident(name),
             if direction == "desc" { "DESC" } else { "ASC" }));
     }
-    // Primary key ties are always broken deterministically, even for custom sort.
     for row in &keys {
         let name: String = row.get(0);
         if req.sort_column.as_ref() != Some(&name) {
@@ -456,32 +454,170 @@ async fn table_rows(
     }
     let order = if ordering.is_empty() { String::new() }
         else { format!(" ORDER BY {}", ordering.join(", ")) };
-    // Cast every returned column to text to keep the original string-based
-    // JSON contract and safely use bound filter parameters for every data type.
+    // Match the existing JSON paging representation, including t/f for bool.
     let projection = column_rows.iter().map(|row| {
         let name: String = row.get(0);
         let typid: u32 = row.get(1);
-        // boolout preserves the original simple-query 't'/'f' representation.
         let expr = if typid == 16 {
             format!("pg_catalog.boolout({})::text", quote_ident(&name))
         } else { format!("{}::text", quote_ident(&name)) };
         format!("{expr} AS {}", quote_ident(&name))
     }).collect::<Vec<_>>().join(", ");
-    let sql = format!(
-        "SELECT {projection} FROM {}.{} AS source{}{} LIMIT {} OFFSET {}",
-        quote_ident(&schema), quote_ident(&table), predicate, order, limit+1, offset
-    );
-    let db_rows = if let Some(pattern) = &filter_pattern {
+    Ok(PreparedBrowse {
+        columns,
+        select_sql: format!("SELECT {projection} FROM {}.{} AS source{predicate}{order}",
+            quote_ident(&schema), quote_ident(&table)),
+        filter_pattern,
+        stable_order,
+    })
+}
+
+async fn table_rows(
+    State(state): State<AppState>,
+    Query(req): Query<PageRequest>,
+) -> ApiResult<PageResponse> {
+    let offset = req.offset.unwrap_or(0);
+    let limit = req.limit.unwrap_or(100);
+    if !(0..=1_000_000).contains(&offset) || !(1..=200).contains(&limit) {
+        return Err(api_error(StatusCode::BAD_REQUEST, "Invalid offset or page size"));
+    }
+    let client = connect(&state).await?;
+    let prepared = prepare_browse(&client, &req).await?;
+    let sql = format!("{} LIMIT {} OFFSET {}", prepared.select_sql, limit + 1, offset);
+    let db_rows = if let Some(pattern) = &prepared.filter_pattern {
         client.query(&sql, &[pattern]).await
     } else {
         client.query(&sql, &[]).await
     }.map_err(|e| postgres_error(&e))?;
     let mut rows: Vec<Vec<Option<String>>> = db_rows.iter().map(|row| {
-        (0..columns.len()).map(|i| row.get::<usize, Option<String>>(i)).collect()
+        (0..prepared.columns.len()).map(|i| row.get::<usize, Option<String>>(i)).collect()
     }).collect();
     let has_next = rows.len() > limit as usize;
     rows.truncate(limit as usize);
-    Ok(Json(PageResponse { columns, rows, offset, limit, has_next, stable_order }))
+    Ok(Json(PageResponse {
+        columns: prepared.columns, rows, offset, limit, has_next,
+        stable_order: prepared.stable_order,
+    }))
+}
+
+const EXPORT_MAX_ROWS: usize = 10_000;
+const EXPORT_MAX_BYTES: usize = 10 * 1024 * 1024;
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExportRequest {
+    schema: String,
+    table: String,
+    filter_column: Option<String>,
+    filter: Option<String>,
+    sort_column: Option<String>,
+    sort_dir: Option<String>,
+}
+
+// Excel/LibreOffice may interpret whitespace-prefixed =,+,-,@ as formulas.
+fn csv_formula_prefix(value: &str) -> bool {
+    value.chars()
+        .find(|ch| !ch.is_whitespace() && *ch != '\u{feff}' && *ch != '\u{200b}')
+        .is_some_and(|ch| matches!(ch, '=' | '+' | '-' | '@'))
+}
+
+// Bounded serialization: check encoded UTF-8 size *before* appending a field.
+fn csv_append_field(out: &mut String, value: &str, cap: usize) -> bool {
+    let guard = csv_formula_prefix(value);
+    let quote_count = value.bytes().filter(|ch| *ch == b'"').count();
+    let needed = value.len().saturating_add(quote_count)
+        .saturating_add(2 + usize::from(guard));
+    if needed > cap.saturating_sub(out.len()) { return false; }
+    out.push('"');
+    if guard { out.push('\''); }
+    for ch in value.chars() {
+        if ch == '"' { out.push('"'); }
+        out.push(ch);
+    }
+    out.push('"');
+    true
+}
+
+fn csv_append_record<'a>(
+    out: &mut String,
+    values: impl Iterator<Item = Option<&'a str>>,
+    cap: usize,
+) -> bool {
+    for (i, value) in values.enumerate() {
+        if i > 0 {
+            if out.len() >= cap { return false; }
+            out.push(',');
+        }
+        // PostgreSQL CSV convention: NULL is unquoted empty, "" is empty text.
+        if let Some(value) = value {
+            if !csv_append_field(out, value, cap) { return false; }
+        }
+    }
+    if cap.saturating_sub(out.len()) < 2 { return false; }
+    out.push_str("\r\n");
+    true
+}
+
+// A single database statement uses one consistent snapshot. The complete body
+// is capped before HTTP headers are sent, so quota failures cannot silently
+// produce a truncated "successful" CSV. This deliberately buffers <=10 MiB:
+// an unbounded HTTP stream cannot change to 413 after sending its headers.
+async fn table_export(
+    State(state): State<AppState>,
+    Query(req): Query<ExportRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
+    let client = connect(&state).await?;
+    // connect() already began a read-only transaction for restricted profiles.
+    // Change its isolation before executing any SELECT.
+    let begin = if state.read_only {
+        "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ"
+    } else {
+        "BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"
+    };
+    client.batch_execute(begin).await.map_err(|e| postgres_error(&e))?;
+    let page = PageRequest {
+        schema: req.schema, table: req.table, offset: None, limit: None,
+        filter_column: req.filter_column, filter: req.filter,
+        sort_column: req.sort_column, sort_dir: req.sort_dir,
+    };
+    let prepared = prepare_browse(&client, &page).await?;
+    let sql = format!("{} LIMIT {}", prepared.select_sql, EXPORT_MAX_ROWS + 1);
+    let params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
+        prepared.filter_pattern.as_ref()
+            .map(|s| vec![s as &(dyn tokio_postgres::types::ToSql + Sync)])
+            .unwrap_or_default();
+    let rows = client.query_raw(&sql, params).await.map_err(|e| postgres_error(&e))?;
+    tokio::pin!(rows);
+
+    let mut csv = String::with_capacity(64 * 1024);
+    csv.push('\u{feff}'); // UTF-8 BOM for spreadsheet compatibility
+    if !csv_append_record(&mut csv, prepared.columns.iter().map(|s| Some(s.as_str())), EXPORT_MAX_BYTES) {
+        return Err(api_error(StatusCode::PAYLOAD_TOO_LARGE, "CSV export exceeds 10 MiB"));
+    }
+    let mut count = 0;
+    while let Some(row) = rows.try_next().await.map_err(|e| postgres_error(&e))? {
+        if count == EXPORT_MAX_ROWS {
+            return Err(api_error(StatusCode::PAYLOAD_TOO_LARGE,
+                "CSV export exceeds 10,000 rows; narrow the filter"));
+        }
+        let values: Vec<Option<String>> = (0..prepared.columns.len())
+            .map(|i| row.get::<usize, Option<String>>(i)).collect();
+        if !csv_append_record(&mut csv, values.iter().map(|v| v.as_deref()), EXPORT_MAX_BYTES) {
+            return Err(api_error(StatusCode::PAYLOAD_TOO_LARGE,
+                "CSV export exceeds 10 MiB; narrow the filter"));
+        }
+        count += 1;
+    }
+    client.batch_execute("COMMIT").await.map_err(|e| postgres_error(&e))?;
+    Ok((
+        [
+            (header::CONTENT_TYPE, "text/csv; charset=utf-8"),
+            (header::CONTENT_DISPOSITION, "attachment; filename=\"datawizz-filtered-table.csv\""),
+            (header::CACHE_CONTROL, "no-store"),
+            (header::HeaderName::from_static("x-content-type-options"), "nosniff"),
+        ],
+        csv,
+    ))
 }
 
 
@@ -1067,6 +1203,7 @@ fn api_routes(state: AppState) -> Router {
         .route("/api/columns", get(columns))
         .route("/api/query", post(execute))
         .route("/api/table-rows", get(table_rows))
+        .route("/api/table-export", get(table_export))
         .route("/api/row-change", post(change_row))
         .route("/api/changeset", post(apply_changeset))
         .route("/api/row-insert", post(insert_row))
@@ -1132,6 +1269,111 @@ async fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn csv_export_escapes_formulas_unicode_quotes_and_distinguishes_null() {
+        let mut csv = String::new();
+        assert!(csv_append_record(&mut csv, [
+            Some("normal"), Some(" =1+1"), Some("-2"), Some("@SUM(A1)"),
+            Some("Unicode: ü😀"), Some("quoted \"value\"\r\nnext"),
+            Some(""), None,
+        ].into_iter(), 10_000));
+        assert!(csv.contains("\"' =1+1\""));
+        assert!(csv.contains("\"'-2\""));
+        assert!(csv.contains("\"'@SUM(A1)\""));
+        assert!(csv.contains("\"Unicode: ü😀\""));
+        assert!(csv.contains("\"quoted \"\"value\"\"\r\nnext\""));
+        assert!(csv.ends_with(&['"', '"', ',', '\r', '\n'].iter().collect::<String>()));
+        assert!(!csv_formula_prefix("plain - text"));
+        assert!(csv_formula_prefix("\u{feff}\u{200b} \t=SUM(A1)"));
+        assert!(csv_formula_prefix("\u{200b}+SUM(A1)"));
+    }
+
+    #[test]
+    fn csv_export_rejects_oversized_rows_without_appending_value() {
+        let mut csv = String::new();
+        assert!(!csv_append_record(&mut csv, [Some("abcdefgh")].into_iter(), 5));
+        assert!(csv.len() <= 5);
+        assert!(!csv_append_record(&mut csv, [Some("x\"x")].into_iter(), 5));
+        assert!(csv.len() <= 5);
+    }
+
+    #[tokio::test]
+    async fn snapshot_export_filters_quotes_enforces_quota_and_preserves_data() {
+        let Some(state) = test_state(200, 10_000) else { return; };
+        let client = connect(&state).await.expect("connect");
+        client.batch_execute(
+            "CREATE TABLE public.datawizz_csv_export_test (
+                id integer PRIMARY KEY, label text, nullable text
+             );
+             INSERT INTO public.datawizz_csv_export_test VALUES
+                 (1, '=2+2', NULL), (2, 'percent%_# ü', ''), (3, 'quoted \"text\"', 'safe');"
+        ).await.expect("export fixture");
+        let export = ExportRequest {
+            schema: "public".into(), table: "datawizz_csv_export_test".into(),
+            filter_column: Some("label".into()), filter: Some("%_#".into()),
+            sort_column: Some("id".into()), sort_dir: Some("desc".into()),
+        };
+        let body = table_export(State(state.clone()), Query(export)).await
+            .expect("snapshot export")
+            .into_response();
+        assert_eq!(body.status(), StatusCode::OK);
+        assert_eq!(body.headers().get(header::CONTENT_TYPE).unwrap(),
+            "text/csv; charset=utf-8");
+        assert_eq!(body.headers().get(header::CACHE_CONTROL).unwrap(), "no-store");
+        let bytes = axum::body::to_bytes(body.into_body(), EXPORT_MAX_BYTES).await
+            .expect("bounded CSV");
+        let output = std::str::from_utf8(&bytes).expect("UTF-8 CSV");
+        assert!(output.starts_with("\u{feff}"));
+        assert!(output.contains("\"percent%_# ü\""));
+        assert!(!output.contains("\"'=2+2\""), "filter must restrict rows");
+
+        let all = table_export(State(state.clone()), Query(ExportRequest {
+            schema: "public".into(), table: "datawizz_csv_export_test".into(),
+            filter_column: None, filter: None, sort_column: Some("id".into()),
+            sort_dir: Some("asc".into()),
+        })).await.expect("export all").into_response();
+        let bytes = axum::body::to_bytes(all.into_body(), EXPORT_MAX_BYTES).await
+            .expect("bounded CSV");
+        let output = std::str::from_utf8(&bytes).unwrap();
+        assert!(output.contains("'=2+2"));
+        assert!(output.contains("quoted \"\"text\"\""));
+        assert!(output.contains(",\r\n"), "NULL should be unquoted empty");
+        assert!(output.contains(",\"\"\r\n"), "empty string should be quoted");
+
+        let bad = table_export(State(state.clone()), Query(ExportRequest {
+            schema: "public".into(), table: "datawizz_csv_export_test".into(),
+            filter_column: Some("id); DROP TABLE x; --".into()), filter: Some("1".into()),
+            sort_column: None, sort_dir: None,
+        })).await;
+        assert!(matches!(bad, Err((StatusCode::BAD_REQUEST, _))));
+
+        let exists: i64 = client.query_one(
+            "SELECT count(*) FROM public.datawizz_csv_export_test", &[]
+        ).await.expect("no writes").get(0);
+        assert_eq!(exists, 3);
+        client.batch_execute(
+            "DROP TABLE public.datawizz_csv_export_test"
+        ).await.expect("fixture cleanup");
+    }
+
+    #[tokio::test]
+    async fn snapshot_export_rejects_more_than_ten_thousand_rows() {
+        let Some(state) = test_state(200, 10_000) else { return; };
+        let client = connect(&state).await.expect("connect");
+        client.batch_execute(
+            "CREATE TABLE public.datawizz_csv_export_quota (id integer PRIMARY KEY);
+             INSERT INTO public.datawizz_csv_export_quota
+             SELECT generate_series(1, 10001);"
+        ).await.expect("large fixture");
+        let result = table_export(State(state), Query(ExportRequest {
+            schema: "public".into(), table: "datawizz_csv_export_quota".into(),
+            filter_column: None, filter: None, sort_column: None, sort_dir: None,
+        })).await;
+        assert!(matches!(result, Err((StatusCode::PAYLOAD_TOO_LARGE, _))));
+        client.batch_execute("DROP TABLE public.datawizz_csv_export_quota")
+            .await.expect("fixture cleanup");
+    }
 
     #[test]
     fn access_token_is_opt_in_and_uses_exact_bearer_header() {
