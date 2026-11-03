@@ -50,6 +50,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Validate opt-in Connection Manager Compose configuration
+        run: |
+          DATAWIZZ_ACCESS_TOKEN=0123456789abcdefghijklmnopqrstuvwxyz \
+            docker compose -f compose.yaml -f compose.manager.yaml config --quiet
       - name: Build Compose application and verify served UI
         run: bash scripts/refresh-ui.sh
       - name: Verify running Compose UI without rebuilding
