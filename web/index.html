@@ -136,10 +136,23 @@
 .sql-draft-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:10px 0}
 .sql-draft-consent{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px}
 .admin-sql-preview{margin:0;padding:12px 14px;border:1px solid var(--border);border-radius:9px;background:var(--bg);color:var(--text);white-space:pre-wrap;overflow-wrap:anywhere;min-height:52px;font:12px/1.65 ui-monospace,SFMono-Regular,Consolas,monospace}
+
+.manager-dialog{background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:12px;width:min(95vw,720px);max-height:88vh;overflow:auto;padding:22px;box-shadow:0 18px 55px #0005}
+.manager-dialog::backdrop{background:#0a1528b3}
+.manager-form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:16px 0}
+.manager-form-grid label{font-size:12px;color:var(--muted);display:flex;flex-direction:column;gap:5px}
+.manager-form-grid label .input{min-width:0;width:100%}
+.manager-form-grid label.manager-wide{grid-column:1/-1}
+.manager-list{display:flex;flex-wrap:wrap;gap:6px;margin:12px 0}
+.manager-list button{font-size:12px}
+.manager-dialog .buttons{justify-content:flex-end;gap:8px;flex-wrap:wrap}
+.manager-dialog [hidden]{display:none!important}
+@media(max-width:600px){.manager-form-grid{grid-template-columns:1fr}}
+
 </style>
 </head>
 <body>
-<header class="topbar"><div class="brand"><span class="logo" aria-hidden="true">⌘</span><span>datawizz</span><span class="tag">PostgreSQL workbench</span></div><div class="top-actions"><label for="connection-chooser" class="eyebrow">Connection</label><select id="connection-chooser" class="input" aria-label="Database connection" style="width:auto;max-width:230px" disabled><option>Loading…</option></select><span id="profile-environment" class="tag">Local · single user</span><span id="profile-db-status" class="note" role="status" aria-live="polite"></span><label id="auth-area" class="note" for="access-token" hidden>API token <input class="input" id="access-token" type="password" autocomplete="off" style="width:180px" placeholder="Access token"> <button id="auth-unlock" type="button" class="btn small">Unlock</button></label><button class="btn small" id="theme" type="button" aria-label="Toggle light and dark theme">☀ / ☾</button></div></header>
+<header class="topbar"><div class="brand"><span class="logo" aria-hidden="true">⌘</span><span>datawizz</span><span class="tag">PostgreSQL workbench</span></div><div class="top-actions"><label for="connection-chooser" class="eyebrow">Connection</label><select id="connection-chooser" class="input" aria-label="Database connection" style="width:auto;max-width:230px" disabled><option>Loading…</option></select><button id="manage-connections" class="btn small" type="button" title="Manage PostgreSQL profiles">Manage</button><span id="profile-environment" class="tag">Local · single user</span><span id="profile-db-status" class="note" role="status" aria-live="polite"></span><label id="auth-area" class="note" for="access-token" hidden>API token <input class="input" id="access-token" type="password" autocomplete="off" style="width:180px" placeholder="Access token"> <button id="auth-unlock" type="button" class="btn small">Unlock</button></label><button class="btn small" id="theme" type="button" aria-label="Toggle light and dark theme">☀ / ☾</button></div></header>
 <div class="app">
 <aside class="sidebar" aria-label="Database navigation">
 <div class="aside-heading"><span class="eyebrow">Explorer</span><button class="btn small" id="refresh" type="button">↻ Refresh</button></div>
@@ -274,6 +287,37 @@
 <form id="row-form" method="dialog"><h2>Edit row</h2><p class="note">Only editable non-key fields can be changed. Blank text is not SQL NULL.</p><div id="row-fields"></div><div class="buttons" style="justify-content:flex-end;margin-top:16px"><button class="btn" type="button" id="row-cancel">Cancel</button><button class="btn primary" type="submit">Save changes</button></div></form>
 </dialog>
 <dialog id="insert-dialog" aria-label="Insert table row" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:12px;max-height:85vh;max-width:min(95vw,560px);width:100%;overflow:auto"><form id="insert-form"><h2>Insert row</h2><p class="note">DEFAULT omits a column. SQL NULL is different from empty text.</p><div id="insert-fields"></div><div class="buttons" style="justify-content:flex-end;margin-top:16px"><button class="btn" type="button" id="insert-cancel">Cancel</button><button class="btn primary" type="submit">Insert</button></div></form></dialog>
+
+<dialog id="manager-dialog" class="manager-dialog" aria-labelledby="manager-heading">
+ <div class="buttons" style="justify-content:space-between"><h2 id="manager-heading" class="card-title">Connection Manager</h2><button id="manager-close" class="btn small" type="button" aria-label="Close Connection Manager">Close</button></div>
+ <p class="note">Manage up to seven server-side PostgreSQL profiles. Credentials are never returned by the API or saved in browser storage. Default and environment-defined profiles are read-only in this manager.</p>
+ <p id="manager-notice" class="note" role="status" aria-live="polite"></p>
+ <div id="manager-profiles" class="manager-list" aria-label="Managed connection profiles"></div>
+ <form id="manager-form" autocomplete="off">
+  <h3 id="manager-form-heading">New connection</h3>
+  <div class="manager-form-grid">
+   <label>Profile ID<input id="manager-id" class="input" required maxlength="32" pattern="[a-z0-9_-]+" placeholder="analytics-test" autocapitalize="off"></label>
+   <label>Display name<input id="manager-label" class="input" required maxlength="64" placeholder="Analytics staging"></label>
+   <label>PostgreSQL host<input id="manager-host" class="input" required maxlength="253" placeholder="db.internal" spellcheck="false"></label>
+   <label>Port<input id="manager-port" class="input" type="number" min="1" max="65535" required value="5432"></label>
+   <label>Database<input id="manager-database" class="input" required maxlength="128" spellcheck="false"></label>
+   <label>Username<input id="manager-username" class="input" required maxlength="128" spellcheck="false" autocomplete="off"></label>
+   <label class="manager-wide">Password (blank keeps existing password when editing)<input id="manager-password" class="input" type="password" autocomplete="new-password" maxlength="4096" placeholder="Not retained in browser state"></label>
+   <label>Environment<select id="manager-environment" class="input"><option value="dev">Development</option><option value="test">Test</option><option value="prod">Production</option></select></label>
+   <label>PostgreSQL TLS<select id="manager-tls" class="input"><option value="disable">Disabled (trusted local only)</option><option value="verify-full">Verify certificate and hostname</option></select></label>
+   <label class="manager-wide">CA file on server (optional; absolute path)<input id="manager-ca-file" class="input" spellcheck="false" placeholder="/etc/ssl/certs/company-ca.pem"></label>
+   <label class="manager-wide" style="flex-direction:row;align-items:center"><input id="manager-read-only" type="checkbox" checked> Read-only connection</label>
+  </div>
+  <p class="note">Production profiles always require read-only mode and verified PostgreSQL TLS. Saving retests the connection before committing changes. Active-profile changes reload the workspace.</p>
+  <div class="buttons">
+   <button id="manager-new" class="btn small" type="button">New</button>
+   <button id="manager-delete" class="btn small" type="button" hidden>Delete</button>
+   <button id="manager-test" class="btn" type="button">Test connection</button>
+   <button id="manager-save" class="btn primary" type="submit">Save connection</button>
+  </div>
+ </form>
+</dialog>
+
 <script src="/assets/sql-editor.js"></script>
 <script>
 "use strict";
