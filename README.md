@@ -139,6 +139,7 @@ The **SQL templates** item under Administration → Tools prepares one PostgreSQ
 for common tasks:
 
 - Roles: create (NOLOGIN), drop, enable/disable login; grant/revoke membership.
+- Objects: create/drop/rename tables, add/drop/rename/retarget columns with a strict type allowlist, create/drop indexes, create/drop views and UNIQUE constraints, table ownership. SQL preview, no autoexecution.
 - Schemas, tables and databases: create/drop schema or database; grant/revoke
   schema, table or database privileges.
 - Operations: analyze, vacuum, reindex, cancel a query, terminate a session,
