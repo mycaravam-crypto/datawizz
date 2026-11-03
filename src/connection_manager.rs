@@ -397,7 +397,7 @@ async fn manager_create(
     }
     let candidate =
         form_profile(form, None).map_err(|message| api_error(StatusCode::BAD_REQUEST, message))?;
-    verify(&state, &candidate).await?;
+    let _verified = verify(&state, &candidate).await?;
     let mut next = profiles.clone();
     next.push(candidate.clone());
     store
@@ -426,7 +426,7 @@ async fn manager_update(
         .ok_or_else(|| api_error(StatusCode::NOT_FOUND, "Managed profile does not exist"))?;
     let candidate = form_profile(form, Some(&profiles[index]))
         .map_err(|message| api_error(StatusCode::BAD_REQUEST, message))?;
-    verify(&state, &candidate).await?;
+    let _verified = verify(&state, &candidate).await?;
     let mut next = profiles.clone();
     next[index] = candidate.clone();
     store
