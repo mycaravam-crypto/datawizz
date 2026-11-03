@@ -633,6 +633,8 @@ struct AdminRelation {
     owner: String,
     estimated_rows: i64,
     size_bytes: i64,
+    // View source is available only through PostgreSQL's own catalog visibility.
+    definition: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -642,6 +644,7 @@ struct AdminIndex {
     name: String,
     valid: bool,
     scans: i64,
+    definition: String,
 }
 
 #[derive(Serialize)]
@@ -763,7 +766,9 @@ async fn admin_overview(State(state): State<AppState>) -> ApiResult<AdminOvervie
                 pg_catalog.pg_get_userbyid(c.relowner)::text,
                 GREATEST(c.reltuples::bigint, 0),
                 CASE WHEN c.relkind IN ('r','p','m','S') THEN pg_catalog.pg_total_relation_size(c.oid)
-                     ELSE 0::bigint END
+                     ELSE 0::bigint END,
+                CASE WHEN c.relkind IN ('v','m') THEN pg_catalog.pg_get_viewdef(c.oid, true)::text
+                     ELSE NULL::text END
          FROM pg_catalog.pg_class c
          JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
          WHERE c.relkind IN ('r','p','v','m','f','S')
@@ -773,7 +778,8 @@ async fn admin_overview(State(state): State<AppState>) -> ApiResult<AdminOvervie
     ).await.map_err(|e| postgres_error(&e))?;
     let indexes = client.query(
         "SELECT s.schemaname::text, s.relname::text, s.indexrelname::text,
-                i.indisvalid, COALESCE(s.idx_scan, 0)::bigint
+                i.indisvalid, COALESCE(s.idx_scan, 0)::bigint,
+                pg_catalog.pg_get_indexdef(s.indexrelid)::text
          FROM pg_catalog.pg_stat_user_indexes s
          JOIN pg_catalog.pg_index i ON i.indexrelid = s.indexrelid
          ORDER BY s.schemaname, s.relname, s.indexrelname LIMIT 100", &[]
@@ -860,10 +866,12 @@ async fn admin_overview(State(state): State<AppState>) -> ApiResult<AdminOvervie
         relations: relations.iter().map(|r| AdminRelation {
             schema: r.get(0), name: r.get(1), kind: r.get(2), owner: r.get(3),
             estimated_rows: r.get(4), size_bytes: r.get(5),
+            definition: r.get(6),
         }).collect(),
         indexes: indexes.iter().map(|r| AdminIndex {
             schema: r.get(0), table: r.get(1), name: r.get(2),
             valid: r.get(3), scans: r.get(4),
+            definition: r.get(5),
         }).collect(),
         constraints: constraints.iter().map(|r| AdminConstraint {
             schema: r.get(0), table: r.get(1), name: r.get(2),
@@ -992,7 +1000,9 @@ mod tests {
             "DROP SCHEMA IF EXISTS datawizz_admin_test CASCADE;
              CREATE SCHEMA datawizz_admin_test;
              CREATE TABLE datawizz_admin_test.items (id integer PRIMARY KEY, label text);
-             CREATE INDEX items_label_idx ON datawizz_admin_test.items (label);"
+             CREATE INDEX items_label_idx ON datawizz_admin_test.items (label);
+             CREATE VIEW datawizz_admin_test.items_view AS
+                 SELECT id, label FROM datawizz_admin_test.items;"
         ).await.expect("create admin catalog fixtures");
 
         let Json(admin) = admin_overview(State(state)).await.expect("read admin details");
@@ -1003,6 +1013,15 @@ mod tests {
             && i.name == "items_label_idx" && i.valid));
         assert!(admin.constraints.iter().any(|c| c.schema == "datawizz_admin_test"
             && c.name == "items_pkey" && c.kind == "p"));
+        let index = admin.indexes.iter().find(|i| i.schema == "datawizz_admin_test"
+            && i.name == "items_label_idx").expect("test index");
+        assert!(index.definition.contains("CREATE INDEX items_label_idx"));
+        let view = admin.relations.iter().find(|r| r.schema == "datawizz_admin_test"
+            && r.name == "items_view").expect("test view");
+        assert_eq!(view.kind, "view");
+        assert!(view.definition.as_ref().is_some_and(|d| d.contains("FROM datawizz_admin_test.items")));
+        assert!(admin.relations.iter().find(|r| r.schema == "datawizz_admin_test"
+            && r.name == "items").is_some_and(|r| r.definition.is_none()));
         assert!(admin.table_stats.iter().any(|t| t.schema == "datawizz_admin_test" && t.table == "items"));
         assert!(admin.settings.iter().any(|s| s.name == "max_connections"));
         assert!(admin.settings.iter().all(|s| matches!(s.name.as_str(),

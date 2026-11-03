@@ -84,6 +84,14 @@
 .admin-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:12px}
 .admin-field{display:flex;flex-direction:column;gap:5px;min-width:0;font-size:12px;color:var(--muted)}
 .admin-field[hidden]{display:none}
+.plan-view{border-bottom:1px solid var(--border);padding:12px 16px;background:var(--raised)}
+.plan-view summary{cursor:pointer;font-weight:700;font-size:13px}
+.plan-tree,.plan-tree ul{list-style:none;padding-left:18px;margin:8px 0}
+.plan-tree li{border-left:2px solid var(--border);padding:5px 0 5px 10px;overflow-wrap:anywhere}
+.plan-node{font-weight:650;font-size:12px}
+.plan-metrics{color:var(--muted);font-size:11px;display:block}
+.admin-ddl-preview{margin-top:12px;padding:12px;border:1px solid var(--border);border-radius:7px;background:var(--panel);font:12px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere;max-height:220px;overflow:auto}
+.admin-ddl-actions{margin-top:8px;display:flex;gap:8px}
 .admin-sql-preview{margin:0;padding:12px 14px;border:1px solid var(--border);border-radius:9px;background:var(--bg);color:var(--text);white-space:pre-wrap;overflow-wrap:anywhere;min-height:52px;font:12px/1.65 ui-monospace,SFMono-Regular,Consolas,monospace}
 </style>
 </head>
@@ -143,6 +151,7 @@
    <label id="admin-field-label-1" class="admin-field" hidden><span>Target</span><input id="admin-field-1" class="input" autocomplete="off" maxlength="200"></label>
    <label id="admin-field-label-2" class="admin-field" hidden><span>Grantee</span><input id="admin-field-2" class="input" autocomplete="off" maxlength="200"></label>
     <label id="admin-field-label-3" class="admin-field" hidden><span>Value</span><input id="admin-field-3" class="input" autocomplete="off" maxlength="200"></label>
+   <label id="admin-field-label-4" class="admin-field" hidden><span>Value</span><input id="admin-field-4" class="input" autocomplete="off" maxlength="200"></label>
    <label id="admin-privilege-label" class="admin-field" hidden><span>Privilege</span><select id="admin-privilege" class="input"></select></label>
   </div>
   <div class="buttons"><button id="admin-generate" class="btn" type="button" disabled>Preview SQL</button><button id="admin-open-sql" class="btn primary" type="button" disabled>Open in new SQL tab</button></div>
@@ -382,9 +391,42 @@ function csvValue(v){
  return '"'+value.replaceAll('"','""')+'"';
 }
 $("csv").onclick=()=>{if(!last||!last.columns.length)return;const lines=[last.columns,...last.rows].map(r=>r.map(csvValue).join(","));const blob=new Blob(["\uFEFF"+lines.join("\r\n")],{type:"text/csv;charset=utf-8"});const url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download="datawizz-loaded-rows.csv";document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000)};
+// Show a bounded, text-only tree for PostgreSQL EXPLAIN (FORMAT JSON).
+function renderExplainPlan(result){
+ if(result.columns?.length!==1||result.columns[0]!=="QUERY PLAN")return;
+ const raw=result.rows?.[0]?.[0];
+ if(typeof raw!=="string"||raw.length>131072)return;
+ let root;
+ try{root=JSON.parse(raw)?.[0]?.Plan}catch{return}
+ if(!root||typeof root!=="object"||typeof root["Node Type"]!=="string")return;
+ const panel=element("div","plan-view"),details=element("details");
+ details.open=true;details.append(element("summary","","Execution plan · JSON tree"));
+ const tree=element("ul","plan-tree");
+ let count=0;
+ function visit(node,parent,depth){
+  if(!node||typeof node!=="object"||depth>12||count++>=128)return;
+  const li=element("li"),name=String(node["Node Type"]||"Node").slice(0,100);
+  const target=[node["Schema"],node["Relation Name"]].filter(v=>typeof v==="string").join(".");
+  li.append(element("span","plan-node",name+(target?" · "+target.slice(0,150):"")));
+  const fields=["Startup Cost","Total Cost","Plan Rows","Actual Rows","Actual Total Time","Join Type"];
+  const metrics=fields.filter(k=>typeof node[k]==="string"||typeof node[k]==="number")
+    .map(k=>k+": "+String(node[k]).slice(0,70));
+  if(metrics.length)li.append(element("span","plan-metrics",metrics.join(" · ")));
+  const children=Array.isArray(node.Plans)?node.Plans:[];
+  if(children.length&&depth<12){
+   const nested=element("ul");
+   for(const child of children.slice(0,Math.max(0,128-count)))visit(child,nested,depth+1);
+   li.append(nested);
+  }
+  parent.append(li);
+ }
+ visit(root,tree,0);
+ details.append(tree);panel.append(details);output.append(panel);
+}
 function renderResults(){
  $("result-filter-clear").disabled=!$("result-filter").value;
  output.replaceChildren();if(!last)return;
+ renderExplainPlan(last);
  const filter=$("result-filter").value.toLocaleLowerCase().trim();
  const rows=last.rows.map((r,i)=>({r,i})).filter(({r})=>!filter||r.some(v=>v!==null&&String(v).toLocaleLowerCase().includes(filter)));
  if(sortColumn>=0)rows.sort((a,b)=>{const x=a.r[sortColumn],y=b.r[sortColumn];if(x===null)return y===null?a.i-b.i:1;if(y===null)return -1;const n=String(x).localeCompare(String(y),undefined,{numeric:true,sensitivity:"base"});return (sortAsc?n:-n)||a.i-b.i});
@@ -588,12 +630,40 @@ function renderAdminView(){
     details.append(element("dt","",label),element("dd","",adminDisplayValue(item[key])));
    }
    inspector.append(details);
+   const ddl=adminCatalogDdl(section.id,item);
+   if(ddl){
+    inspector.append(element("h4","","PostgreSQL definition"));
+    inspector.append(element("pre","admin-ddl-preview",ddl));
+    const actions=element("div","admin-ddl-actions"),open=element("button","btn small","Open DDL in SQL console");
+    open.type="button";open.onclick=()=>{
+     persistTab();
+     const tab={id:nextTab,name:"DDL "+nextTab,sql:ddl};
+     nextTab++;tabs.push(tab);activeTab=tab.id;sql.value=tab.sql;renderTabs();
+     showWorkspace("sql");sql.focus();
+     info("DDL opened for review. Nothing has been executed.");
+    };
+    actions.append(open);inspector.append(actions);
+   }
   };
   tr.onclick=inspect;
   tr.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();inspect()}});
   tbody.append(tr);
  }
  table.append(tbody);output.append(table);
+}
+// PostgreSQL catalog definitions only; no invented CREATE TABLE source.
+function adminCatalogDdl(section,item){
+ if(typeof item.definition!=="string"||!item.definition.trim())return null;
+ if(section==="indexes")return item.definition.trim().replace(/;?$/,";");
+ if(section==="relations"&&(item.kind==="view"||item.kind==="materialized view")){
+  const type=item.kind==="view"?"VIEW":"MATERIALIZED VIEW";
+  return "CREATE "+type+" "+quoted(item.schema)+"."+quoted(item.name)+
+    " AS\n"+item.definition.trim().replace(/;?$/,";");
+ }
+ if(section==="constraints")
+  return "ALTER TABLE "+quoted(item.schema)+"."+quoted(item.table)+
+    " ADD CONSTRAINT "+quoted(item.name)+" "+item.definition.trim().replace(/;?$/,";");
+ return null;
 }
 $("admin-section-search").addEventListener("input",renderAdminView);
 $("admin-refresh").onclick=async()=>{
@@ -619,6 +689,11 @@ function adminIdentifier(value){
  return quoted(name)
 }
 function adminGrantee(value){return value.trim().toUpperCase()==="PUBLIC"?"PUBLIC":adminIdentifier(value)}
+function adminTextLiteral(raw){
+ if(raw.length>200||/[\u0000-\u001f\u007f]/.test(raw))
+  throw Error("Text must be at most 200 characters without control characters.");
+ return "'"+raw.replaceAll("'","''")+"'";
+}
 function adminSqlType(raw){
  const type=raw.trim().toLowerCase().replace(/\s+/g," ");
  const types=["text","integer","bigint","boolean","date","timestamp","timestamptz","uuid","numeric","jsonb"];
@@ -671,7 +746,18 @@ const adminTemplates=[
 {id:"constraint-drop",title:"Drop constraint (no CASCADE)",fields:["Schema","Table","Constraint name"],destructive:true,sql:a=>"ALTER TABLE "+adminIdentifier(a[0])+"."+adminIdentifier(a[1])+" DROP CONSTRAINT "+adminIdentifier(a[2])+";"},
 {id:"view-create",title:"Create view from table",fields:["Schema","New view","Source table"],sql:a=>"CREATE VIEW "+adminIdentifier(a[0])+"."+adminIdentifier(a[1])+" AS SELECT * FROM "+adminIdentifier(a[0])+"."+adminIdentifier(a[2])+";"},
 {id:"view-drop",title:"Drop view (no CASCADE)",fields:["Schema","View"],destructive:true,sql:a=>"DROP VIEW "+adminIdentifier(a[0])+"."+adminIdentifier(a[1])+";"},
-{id:"table-owner",title:"Change table owner",fields:["Schema","Table","New owner role"],sql:a=>"ALTER TABLE "+adminIdentifier(a[0])+"."+adminIdentifier(a[1])+" OWNER TO "+adminIdentifier(a[2])+";"}
+{id:"table-owner",title:"Change table owner",fields:["Schema","Table","New owner role"],sql:a=>"ALTER TABLE "+adminIdentifier(a[0])+"."+adminIdentifier(a[1])+" OWNER TO "+adminIdentifier(a[2])+";"},
+{id:"foreignkey-add",title:"Add foreign key (same schema)",fields:["Schema","Table","Column","Referenced table","Referenced column"],sql:a=>"ALTER TABLE "+adminIdentifier(a[0])+"."+adminIdentifier(a[1])+" ADD FOREIGN KEY ("+adminIdentifier(a[2])+") REFERENCES "+adminIdentifier(a[0])+"."+adminIdentifier(a[3])+" ("+adminIdentifier(a[4])+");"},
+{id:"column-set-required",title:"Set column NOT NULL",fields:["Schema","Table","Column"],destructive:true,sql:a=>"ALTER TABLE "+adminIdentifier(a[0])+"."+adminIdentifier(a[1])+" ALTER COLUMN "+adminIdentifier(a[2])+" SET NOT NULL;"},
+{id:"column-drop-required",title:"Drop column NOT NULL",fields:["Schema","Table","Column"],destructive:true,sql:a=>"ALTER TABLE "+adminIdentifier(a[0])+"."+adminIdentifier(a[1])+" ALTER COLUMN "+adminIdentifier(a[2])+" DROP NOT NULL;"},
+{id:"column-set-default",title:"Set column literal default",fields:["Schema","Table","Column","Default literal"],sql:a=>"ALTER TABLE "+adminIdentifier(a[0])+"."+adminIdentifier(a[1])+" ALTER COLUMN "+adminIdentifier(a[2])+" SET DEFAULT "+adminTextLiteral(a[3])+";"},
+{id:"column-drop-default",title:"Drop column default",fields:["Schema","Table","Column"],destructive:true,sql:a=>"ALTER TABLE "+adminIdentifier(a[0])+"."+adminIdentifier(a[1])+" ALTER COLUMN "+adminIdentifier(a[2])+" DROP DEFAULT;"},
+{id:"schema-owner",title:"Change schema owner",fields:["Schema","New owner role"],sql:a=>"ALTER SCHEMA "+adminIdentifier(a[0])+" OWNER TO "+adminIdentifier(a[1])+";"},
+{id:"schema-rename",title:"Rename schema",fields:["Schema","New schema name"],destructive:true,sql:a=>"ALTER SCHEMA "+adminIdentifier(a[0])+" RENAME TO "+adminIdentifier(a[1])+";"},
+{id:"view-rename",title:"Rename view",fields:["Schema","View","New view name"],sql:a=>"ALTER VIEW "+adminIdentifier(a[0])+"."+adminIdentifier(a[1])+" RENAME TO "+adminIdentifier(a[2])+";"},
+{id:"index-rename",title:"Rename index",fields:["Schema","Index","New index name"],sql:a=>"ALTER INDEX "+adminIdentifier(a[0])+"."+adminIdentifier(a[1])+" RENAME TO "+adminIdentifier(a[2])+";"},
+{id:"table-comment",title:"Set table comment",fields:["Schema","Table","Comment"],sql:a=>"COMMENT ON TABLE "+adminIdentifier(a[0])+"."+adminIdentifier(a[1])+" IS "+adminTextLiteral(a[2])+";"},
+{id:"column-comment",title:"Set column comment",fields:["Schema","Table","Column","Comment"],sql:a=>"COMMENT ON COLUMN "+adminIdentifier(a[0])+"."+adminIdentifier(a[1])+"."+adminIdentifier(a[2])+" IS "+adminTextLiteral(a[3])+";"}
 ];
 for(const task of adminTemplates){const option=element("option","",task.title);option.value=task.id;$("admin-task").append(option)}
 let adminPreparedSql="",adminPreparedTask=null;
@@ -681,7 +767,7 @@ function clearAdminPreview(){
 }
 function updateAdminBuilder(){
  const task=adminTemplates.find(t=>t.id===$("admin-task").value);
- for(let i=0;i<4;i++){
+ for(let i=0;i<5;i++){
   const label=$("admin-field-label-"+i),field=$("admin-field-"+i);
   label.hidden=!task||i>=task.fields.length;
   if(!label.hidden)label.firstElementChild.textContent=task.fields[i];
@@ -695,7 +781,7 @@ function updateAdminBuilder(){
  clearAdminPreview();
 }
 $("admin-task").addEventListener("change",updateAdminBuilder);
-for(let i=0;i<4;i++)$("admin-field-"+i).addEventListener("input",clearAdminPreview);
+for(let i=0;i<5;i++)$("admin-field-"+i).addEventListener("input",clearAdminPreview);
 $("admin-privilege").addEventListener("change",clearAdminPreview);
 $("admin-generate").onclick=()=>{
  const task=adminTemplates.find(t=>t.id===$("admin-task").value);

@@ -33,7 +33,8 @@ const { chromium } = require("playwright");
 
     assert(admin.schemas.some(s=>s.name==="public"));
     assert(admin.relations.some(r=>r.schema==="public"&&r.name==="datawizz_browser_e2e"));
-    assert(admin.indexes.some(i=>i.table==="datawizz_browser_e2e"&&i.valid));
+    assert(admin.indexes.some(i=>i.table==="datawizz_browser_e2e"&&i.valid
+      &&i.definition.includes("CREATE UNIQUE INDEX")));
     assert(admin.constraints.some(c=>c.table==="datawizz_browser_e2e"&&c.kind==="p"));
     assert(admin.table_stats.some(t=>t.table==="datawizz_browser_e2e"));
     assert(admin.settings.some(s=>s.name==="max_connections"));
@@ -42,6 +43,10 @@ const { chromium } = require("playwright");
     await page.locator("#admin-section-search").fill("datawizz_browser_e2e");
     await page.locator("#admin-output tbody tr").first().click();
     await page.locator("#admin-detail").getByText("datawizz_browser_e2e").waitFor();
+    await page.locator("#admin-nav-indexes").click();
+    await page.locator("#admin-section-search").fill("datawizz_browser_e2e");
+    await page.locator("#admin-output tbody tr").first().click();
+    assert.match(await page.locator("#admin-detail .admin-ddl-preview").textContent(),/CREATE UNIQUE INDEX/);
     await page.locator("#admin-sql-nav").click();
     await page.locator("#admin-task").selectOption("view-create");
     await page.locator("#admin-field-0").fill("public");
@@ -137,6 +142,13 @@ const { chromium } = require("playwright");
     assert.equal(response.status(),200);
     const rows = await response.json();
     assert.equal(rows.rows[0][1],"after-dialog");
-    console.log("Real PostgreSQL browser editing without page reload passed");
+
+    // Real PostgreSQL EXPLAIN result is displayed as a navigable, text-only plan tree.
+    await page.locator("#sql").fill("EXPLAIN (FORMAT JSON) SELECT * FROM public.datawizz_browser_e2e;");
+    await page.locator("#run").click();
+    await page.locator("#output .plan-view .plan-node").first().waitFor();
+    assert.match(await page.locator("#output .plan-view").textContent(),/Scan/);
+    assert.equal(await page.locator("#output img").count(),0);
+    console.log("Real PostgreSQL browser editing and EXPLAIN passed");
   } finally {await browser.close()}
 })().catch(e=>{console.error(e);process.exitCode=1});
