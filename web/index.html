@@ -37,6 +37,12 @@
 
 .review-dialog{background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:14px;width:min(94vw,780px);max-height:88vh;padding:24px}.review-dialog h2{margin:0 0 8px;font-size:20px}.review-scroll{max-height:52vh;overflow:auto;margin-block:16px;border:1px solid var(--border);border-radius:9px}.review-table{width:100%;border-collapse:collapse;font-size:13px}.review-table th,.review-table td{padding:9px 12px;text-align:left;vertical-align:top;border-bottom:1px solid var(--border);overflow-wrap:anywhere;max-width:260px}.review-table th{background:var(--raised);position:sticky;top:0}.review-table td:nth-child(3){color:var(--muted)}.review-table td:nth-child(4){font-weight:650}.review-actions{justify-content:flex-end}.review-null{font-style:italic;color:var(--warn)}@media(max-width:670px){.review-dialog{padding:16px}.review-table th,.review-table td{padding:8px}}
 .admin-overview{padding:16px 18px;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,390px),1fr));gap:16px}.admin-section{min-width:0}.admin-section h3{font-size:14px;margin:0 0 9px}.admin-scroll{overflow:auto;max-height:290px;border:1px solid var(--border);border-radius:9px}.admin-scroll .grid th,.admin-scroll .grid td{padding:7px 10px;font-size:12px}.admin-scroll .grid th:first-child,.admin-scroll .grid td:first-child{position:static}.admin-message{padding:16px 18px;color:var(--muted)}.admin-section .note{padding:10px}
+
+.admin-sql-builder{padding:16px 18px;display:flex;flex-direction:column;gap:12px}
+.admin-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:12px}
+.admin-field{display:flex;flex-direction:column;gap:5px;min-width:0;font-size:12px;color:var(--muted)}
+.admin-field[hidden]{display:none}
+.admin-sql-preview{margin:0;padding:12px 14px;border:1px solid var(--border);border-radius:9px;background:var(--bg);color:var(--text);white-space:pre-wrap;overflow-wrap:anywhere;min-height:52px;font:12px/1.65 ui-monospace,SFMono-Regular,Consolas,monospace}
 </style>
 </head>
 <body>
@@ -57,6 +63,22 @@
 <div id="changes-bar" class="changes-bar" hidden><strong id="changes-count">0 pending changes</strong><span class="note">Changes are staged locally. Saving commits all rows atomically.</span><button id="changes-save" type="button" class="btn primary small">Review & save</button><button id="changes-discard" type="button" class="btn small">Discard changes</button></div><div id="row-actions" class="selection-bar row-toolbar" hidden><span class="eyebrow">Table actions</span><button class="btn small" id="browse" type="button" disabled title="Load rows; does not open the editor">↻ Refresh rows</button><button class="btn small" id="insert" type="button" disabled>+ Insert row</button><span id="row-action-hint" class="note" aria-live="polite">Select a row to edit it.</span><span class="note" id="grid-keyboard-hint" title="Keyboard controls for table cells">Cells: arrows navigate · F2/Enter edit · Tab next · Esc cancel</span><span class="toolbar-spacer"></span><button id="edit-mode" class="btn small" type="button" aria-pressed="false" disabled>Edit mode: Off</button><button id="row-edit" class="btn small primary" type="button" disabled>Edit row</button><button id="row-delete" class="btn small" type="button" disabled>Delete</button><button id="bulk-toggle" class="btn small" type="button" aria-controls="selection-bar" aria-expanded="false" disabled>Bulk edit</button><button id="changes-undo" type="button" class="btn small" disabled title="Undo staged change">Undo</button><button id="changes-redo" type="button" class="btn small" disabled title="Redo staged change">Redo</button></div><div id="selection-bar" class="selection-bar" hidden><span id="selection-count" class="stat">0 selected</span><label class="note" for="bulk-column">Column</label><select id="bulk-column" class="input" style="width:auto"></select><input id="bulk-value" aria-label="Value for selected rows" class="input" style="width:180px" placeholder="New value"><label class="note"><input type="checkbox" id="bulk-null"> SQL NULL</label><button type="button" class="btn small" id="bulk-apply">Apply to selected</button><button type="button" class="btn small" id="bulk-clear">Clear selection</button><span class="note">Up to 20 rows · staged and saved atomically</span></div><div id="output" class="results-content" role="region" aria-label="SQL results table" tabindex="0" aria-live="off"><div class="empty"><strong>No results yet</strong><span>Run a statement or choose a table from the explorer.</span></div></div>
 <div id="server-pager" class="server-pager" hidden><button class="btn small" id="server-prev" type="button">← Previous 100</button><span id="server-page-info" class="note"></span><button class="btn small" id="server-next" type="button">Next 100 →</button></div><div class="footer"><span id="result-note" class="note">Only loaded rows can be exported.</span><div class="buttons"><button id="prev" class="btn small" type="button" disabled>← Previous</button><span id="page" class="note">Page —</span><button id="next" class="btn small" type="button" disabled>Next →</button></div></div></section>
 <section class="card" aria-labelledby="admin-heading"><div class="card-header"><div><h2 id="admin-heading" class="card-title">PostgreSQL administration</h2><p class="note">Read-only inventory · database permissions determine visibility · up to 100 entries per section</p></div><button id="admin-refresh" class="btn small" type="button">Load administration</button></div><div id="admin-output" class="admin-message" role="region" aria-label="Database administration inventory" aria-live="polite">Load to inspect databases, roles, memberships, sessions and extensions. No administrative changes are executed.</div></section>
+
+<section class="card" aria-labelledby="admin-sql-title">
+ <div class="card-header"><div><h2 id="admin-sql-title" class="card-title">Administration SQL builder</h2><p class="note">Generate and review a single PostgreSQL statement. Nothing runs automatically.</p></div></div>
+ <div class="admin-sql-builder">
+  <label class="admin-field"><span>Operation</span><select id="admin-task" class="input"><option value="">Choose an operation…</option></select></label>
+  <div id="admin-fields" class="admin-fields">
+   <label id="admin-field-label-0" class="admin-field" hidden><span>Object</span><input id="admin-field-0" class="input" autocomplete="off" maxlength="200"></label>
+   <label id="admin-field-label-1" class="admin-field" hidden><span>Target</span><input id="admin-field-1" class="input" autocomplete="off" maxlength="200"></label>
+   <label id="admin-field-label-2" class="admin-field" hidden><span>Grantee</span><input id="admin-field-2" class="input" autocomplete="off" maxlength="200"></label>
+   <label id="admin-privilege-label" class="admin-field" hidden><span>Privilege</span><select id="admin-privilege" class="input"></select></label>
+  </div>
+  <div class="buttons"><button id="admin-generate" class="btn" type="button" disabled>Preview SQL</button><button id="admin-open-sql" class="btn primary" type="button" disabled>Open in new SQL tab</button></div>
+  <pre id="admin-sql-preview" class="admin-sql-preview" aria-live="polite">Choose an operation to prepare SQL.</pre>
+  <p id="admin-sql-message" class="note" role="status">Generated SQL uses quoted identifiers. PostgreSQL permissions are enforced when you explicitly run it.</p>
+ </div>
+</section>
 </main>
 </div>
 <dialog id="changes-review" aria-labelledby="changes-review-title" class="review-dialog">
@@ -379,12 +401,110 @@ $("admin-refresh").onclick=async()=>{
    ["Roles",[["name","Role"],["can_login","Login"],["superuser","Superuser"],["create_db","Create DB"],["create_role","Create role"]],data.roles],
    ["Role memberships",[["role","Role"],["member","Member"],["admin_option","Admin option"]],data.memberships],
    ["Sessions",[["pid","PID"],["database","Database"],["username","User"],["state","State"],["wait_event_type","Wait"]],data.sessions],
-   ["Extensions",[["name","Extension"],["version","Version"],["schema","Schema"]],data.extensions]
+   ["Extensions",[["name","Extension"],["version","Version"],["schema","Schema"]],data.extensions],
+   ["Schemas",[["name","Schema"],["owner","Owner"],["can_use","Usage"],["can_create","Create"]],data.schemas],
+   ["Relations",[["schema","Schema"],["name","Object"],["kind","Kind"],["owner","Owner"],["estimated_rows","Est. rows"],["size_bytes","Bytes"]],data.relations],
+   ["Indexes",[["schema","Schema"],["table","Table"],["name","Index"],["valid","Valid"],["scans","Scans"]],data.indexes],
+   ["Constraints",[["schema","Schema"],["table","Table"],["name","Constraint"],["kind","Type"],["definition","Definition"]],data.constraints],
+   ["Table statistics",[["schema","Schema"],["table","Table"],["live_rows","Live"],["dead_rows","Dead"],["seq_scans","Seq scans"],["index_scans","Index scans"],["last_autovacuum","Autovacuum"],["last_autoanalyze","Autoanalyze"]],data.table_stats],
+   ["Relation locks",[["pid","PID"],["relation","Relation"],["mode","Mode"],["granted","Granted"]],data.locks],
+   ["Safe settings",[["name","Setting"],["value","Value"],["unit","Unit"],["pending_restart","Restart needed"]],data.settings],
+   ["Table privileges",[["schema","Schema"],["table","Table"],["grantee","Grantee"],["privilege","Privilege"],["grantable","Grantable"]],data.privileges],
+   ["Routines",[["schema","Schema"],["name","Name"],["arguments","Arguments"],["kind","Kind"],["owner","Owner"]],data.routines]
   ];
   output.className="admin-overview";output.replaceChildren(...sections.map(([label,fields,items])=>renderAdminSection(label,fields,items)));
   text(button,"Refresh administration");
  }catch(e){output.className="admin-message";output.replaceChildren(element("div","error-box",e.message));text(button,"Retry administration")}
  finally{button.disabled=false}
+};
+
+// Client-only SQL templates. They never call the query endpoint; execution stays an explicit editor action.
+function adminIdentifier(value){
+ const name=value.trim();
+ if(!name||new TextEncoder().encode(name).length>63||/[\u0000-\u001f\u007f]/.test(name))
+  throw Error("Identifiers must be 1–63 UTF-8 bytes without control characters.");
+ return quoted(name)
+}
+function adminGrantee(value){return value.trim().toUpperCase()==="PUBLIC"?"PUBLIC":adminIdentifier(value)}
+function adminPid(value){
+ const number=value.trim();
+ if(!/^[1-9][0-9]*$/.test(number)||Number(number)>2147483647)throw Error("PID must be a positive PostgreSQL process ID.");
+ return number
+}
+const adminPermissions={
+ schema:["USAGE","CREATE"],
+ table:["SELECT","INSERT","UPDATE","DELETE","TRUNCATE","REFERENCES","TRIGGER"],
+ database:["CONNECT","CREATE","TEMPORARY"]
+};
+const adminTemplates=[
+ {id:"role-create",title:"Create role (NOLOGIN)",fields:["New role"],sql:a=>"CREATE ROLE "+adminIdentifier(a[0])+" NOLOGIN;"},
+ {id:"role-drop",title:"Drop role",fields:["Role"],destructive:true,sql:a=>"DROP ROLE "+adminIdentifier(a[0])+";"},
+ {id:"role-login",title:"Allow role login",fields:["Role"],sql:a=>"ALTER ROLE "+adminIdentifier(a[0])+" LOGIN;"},
+ {id:"role-nologin",title:"Disable role login",fields:["Role"],destructive:true,sql:a=>"ALTER ROLE "+adminIdentifier(a[0])+" NOLOGIN;"},
+ {id:"role-grant",title:"Grant role membership",fields:["Role","Member"],sql:a=>"GRANT "+adminIdentifier(a[0])+" TO "+adminIdentifier(a[1])+";"},
+ {id:"role-revoke",title:"Revoke role membership",fields:["Role","Member"],destructive:true,sql:a=>"REVOKE "+adminIdentifier(a[0])+" FROM "+adminIdentifier(a[1])+";"},
+ {id:"schema-create",title:"Create schema",fields:["Schema"],sql:a=>"CREATE SCHEMA "+adminIdentifier(a[0])+";"},
+ {id:"schema-drop",title:"Drop empty schema (no CASCADE)",fields:["Schema"],destructive:true,sql:a=>"DROP SCHEMA "+adminIdentifier(a[0])+";"},
+ {id:"schema-grant",title:"Grant schema privilege",fields:["Schema","Grantee (or PUBLIC)"],privilege:"schema",sql:(a,p)=>"GRANT "+p+" ON SCHEMA "+adminIdentifier(a[0])+" TO "+adminGrantee(a[1])+";"},
+ {id:"schema-revoke",title:"Revoke schema privilege",fields:["Schema","Grantee (or PUBLIC)"],privilege:"schema",destructive:true,sql:(a,p)=>"REVOKE "+p+" ON SCHEMA "+adminIdentifier(a[0])+" FROM "+adminGrantee(a[1])+";"},
+ {id:"table-grant",title:"Grant table privilege",fields:["Schema","Table","Grantee (or PUBLIC)"],privilege:"table",sql:(a,p)=>"GRANT "+p+" ON TABLE "+adminIdentifier(a[0])+"."+adminIdentifier(a[1])+" TO "+adminGrantee(a[2])+";"},
+ {id:"table-revoke",title:"Revoke table privilege",fields:["Schema","Table","Grantee (or PUBLIC)"],privilege:"table",destructive:true,sql:(a,p)=>"REVOKE "+p+" ON TABLE "+adminIdentifier(a[0])+"."+adminIdentifier(a[1])+" FROM "+adminGrantee(a[2])+";"},
+ {id:"table-analyze",title:"Analyze table",fields:["Schema","Table"],sql:a=>"ANALYZE "+adminIdentifier(a[0])+"."+adminIdentifier(a[1])+";"},
+ {id:"table-vacuum",title:"Vacuum and analyze table",fields:["Schema","Table"],sql:a=>"VACUUM (ANALYZE) "+adminIdentifier(a[0])+"."+adminIdentifier(a[1])+";"},
+ {id:"table-reindex",title:"Reindex table",fields:["Schema","Table"],destructive:true,sql:a=>"REINDEX TABLE "+adminIdentifier(a[0])+"."+adminIdentifier(a[1])+";"},
+ {id:"session-cancel",title:"Cancel running query",fields:["Session PID"],sql:a=>"SELECT pg_cancel_backend("+adminPid(a[0])+");"},
+ {id:"session-terminate",title:"Terminate session",fields:["Session PID"],destructive:true,sql:a=>"SELECT pg_terminate_backend("+adminPid(a[0])+");"},
+ {id:"extension-create",title:"Install extension",fields:["Extension"],sql:a=>"CREATE EXTENSION "+adminIdentifier(a[0])+";"},
+ {id:"extension-drop",title:"Drop extension (no CASCADE)",fields:["Extension"],destructive:true,sql:a=>"DROP EXTENSION "+adminIdentifier(a[0])+";"},
+ {id:"database-create",title:"Create database",fields:["Database"],sql:a=>"CREATE DATABASE "+adminIdentifier(a[0])+";"},
+ {id:"database-drop",title:"Drop database (no FORCE)",fields:["Database"],destructive:true,sql:a=>"DROP DATABASE "+adminIdentifier(a[0])+";"},
+ {id:"database-grant",title:"Grant database privilege",fields:["Database","Grantee (or PUBLIC)"],privilege:"database",sql:(a,p)=>"GRANT "+p+" ON DATABASE "+adminIdentifier(a[0])+" TO "+adminGrantee(a[1])+";"},
+ {id:"database-revoke",title:"Revoke database privilege",fields:["Database","Grantee (or PUBLIC)"],privilege:"database",destructive:true,sql:(a,p)=>"REVOKE "+p+" ON DATABASE "+adminIdentifier(a[0])+" FROM "+adminGrantee(a[1])+";"}
+];
+for(const task of adminTemplates){const option=element("option","",task.title);option.value=task.id;$("admin-task").append(option)}
+let adminPreparedSql="",adminPreparedTask=null;
+function clearAdminPreview(){
+ adminPreparedSql="";adminPreparedTask=null;$("admin-open-sql").disabled=true;
+ text($("admin-sql-preview"),"Fill the operation fields and preview SQL.");
+}
+function updateAdminBuilder(){
+ const task=adminTemplates.find(t=>t.id===$("admin-task").value);
+ for(let i=0;i<3;i++){
+  const label=$("admin-field-label-"+i),field=$("admin-field-"+i);
+  label.hidden=!task||i>=task.fields.length;
+  if(!label.hidden)label.firstElementChild.textContent=task.fields[i];
+  field.value="";
+ }
+ const permissions=task?.privilege?adminPermissions[task.privilege]:null,selector=$("admin-privilege");
+ $("admin-privilege-label").hidden=!permissions;selector.replaceChildren();
+ if(permissions)for(const item of permissions){const option=element("option","",item);option.value=item;selector.append(option)}
+ $("admin-generate").disabled=!task;
+ text($("admin-sql-message"),"SQL is only prepared here; review it before explicit execution in the query editor.");
+ clearAdminPreview();
+}
+$("admin-task").addEventListener("change",updateAdminBuilder);
+for(let i=0;i<3;i++)$("admin-field-"+i).addEventListener("input",clearAdminPreview);
+$("admin-privilege").addEventListener("change",clearAdminPreview);
+$("admin-generate").onclick=()=>{
+ const task=adminTemplates.find(t=>t.id===$("admin-task").value);
+ if(!task)return;
+ try{
+  const values=task.fields.map((_,i)=>$("admin-field-"+i).value);
+  const permission=task.privilege?$("admin-privilege").value:"";
+  if(task.privilege&&!adminPermissions[task.privilege].includes(permission))throw Error("Unsupported privilege.");
+  const statement=task.sql(values,permission);
+  adminPreparedSql=statement;adminPreparedTask=task;$("admin-open-sql").disabled=false;
+  text($("admin-sql-preview"),statement);
+  text($("admin-sql-message"),task.destructive?"Destructive operation. Review the statement and its impact before executing.":"Review the statement and database permissions before executing.");
+ }catch(e){clearAdminPreview();text($("admin-sql-message"),e.message)}
+};
+$("admin-open-sql").onclick=()=>{
+ if(!adminPreparedSql||busy)return;
+ if(adminPreparedTask?.destructive&&!confirm("This statement may remove privileges, objects, or sessions. Open a SQL tab for manual review?"))return;
+ persistTab();
+ const tab={id:nextTab,name:"Admin SQL "+nextTab,sql:adminPreparedSql};
+ nextTab++;tabs.push(tab);activeTab=tab.id;sql.value=tab.sql;renderTabs();sql.focus();
+ text($("admin-sql-message"),"SQL opened in a separate tab. Nothing has been executed.");
 };
 loadObjects();
 </script>

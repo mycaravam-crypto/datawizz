@@ -13,6 +13,13 @@ const server = http.createServer(async (req, res) => {
   if (req.url === "/") {
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.end(html);
+  } else if (req.url === "/api/admin") {
+    res.end(JSON.stringify({
+      databases:[{name:"test",owner:"test",allow_connections:true}],
+      roles:[{name:"<img src=x onerror=alert(1)>",can_login:false,superuser:false,create_db:false,create_role:false}],
+      memberships:[],sessions:[],extensions:[],schemas:[],relations:[],indexes:[],
+      constraints:[],table_stats:[],locks:[],settings:[],privileges:[],routines:[]
+    }));
   } else if (req.url === "/api/schema") {
     res.end(JSON.stringify([{schema:"public",name:"demo",kind:"table"},{schema:"public",name:"other",kind:"table"}]));
   } else if (req.url.startsWith("/api/columns")) {
@@ -216,6 +223,38 @@ const server = http.createServer(async (req, res) => {
     await page.waitForTimeout(150);
     assert.equal(await page.locator("#output .grid").count(),0,"Stale table A must not appear after switching to B");
     assert.equal(await page.locator("#selected").innerText(),"public.other");
+
+    // Admin metadata is rendered as text. SQL templates never auto-execute.
+    await page.locator("#admin-refresh").click();
+    await page.locator("#admin-output h3").first().waitFor();
+    assert.equal(await page.locator("#admin-output h3").count(),14);
+    assert.equal(await page.locator("#admin-output img").count(),0,"Catalog data must not create HTML nodes");
+    await page.locator("#admin-output").getByText("<img src=x onerror=alert(1)>").waitFor();
+    let autoExecuted=0;
+    await page.route("**/api/query",route=>{autoExecuted++;return route.continue()});
+    await page.locator("#admin-task").selectOption("table-grant");
+    await page.locator("#admin-field-0").fill("public");
+    await page.locator("#admin-field-1").fill("orders");
+    await page.locator("#admin-field-2").fill("PUBLIC");
+    await page.locator("#admin-privilege").selectOption("SELECT");
+    await page.locator("#admin-generate").click();
+    assert.equal(await page.locator("#admin-sql-preview").textContent(),'GRANT SELECT ON TABLE "public"."orders" TO PUBLIC;');
+    await page.locator("#admin-open-sql").click();
+    assert.equal(await page.locator("#sql").inputValue(),'GRANT SELECT ON TABLE "public"."orders" TO PUBLIC;');
+    assert.equal(autoExecuted,0,"Preparing SQL must not call the query endpoint");
+    await page.getByRole("tab",{name:"Query 1"}).click();
+    assert.notEqual(await page.locator("#sql").inputValue(),'GRANT SELECT ON TABLE "public"."orders" TO PUBLIC;');
+    await page.locator("#admin-task").selectOption("role-create");
+    await page.locator("#admin-field-0").fill('bad"; DROP ROLE admin; --');
+    await page.locator("#admin-generate").click();
+    assert.equal(await page.locator("#admin-sql-preview").textContent(),'CREATE ROLE "bad""; DROP ROLE admin; --" NOLOGIN;');
+    await page.locator("#admin-task").selectOption("session-terminate");
+    await page.locator("#admin-field-0").fill("12); DROP TABLE x;");
+    await page.locator("#admin-generate").click();
+    assert.equal(await page.locator("#admin-open-sql").isDisabled(),true,"Unsafe PID must be rejected");
+    assert.match(await page.locator("#admin-sql-message").textContent(),/PID must be/);
+    assert.equal(autoExecuted,0);
+    await page.unroute("**/api/query");
     console.log("Chromium workbench UI smoke tests passed");
   } finally {await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1}).finally(()=>server.close());

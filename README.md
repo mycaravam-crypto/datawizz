@@ -7,7 +7,8 @@ Small, fast, local-first PostgreSQL UI written in Rust. One executable; no Node 
 - Execute a single SQL statement (SELECT and permitted writes/DDL)
 - Display bounded results, errors, runtime and affected rows; export **loaded rows only** as CSV
 - Built-in HTML/JavaScript editor. No user accounts or stored credentials.
-- Read-only PostgreSQL administration inventory: databases, roles and memberships, sessions and extensions (at most 100 records per section).
+- PostgreSQL administration inventory: databases, roles/memberships, sessions, extensions, schemas, relations, indexes, constraints, table statistics, locks, safe server settings, visible table privileges and routines (max 100 entries per section).
+- Guided administration SQL templates for roles, memberships, schemas, table/database grants, database lifecycle, session control and maintenance; generated statements open in a separate editor tab and never run automatically.
 
 ## Quick start: disposable test PostgreSQL (recommended)
 
@@ -115,21 +116,41 @@ docker run --rm -v "${PWD}:/work" -w /work rust:1-bookworm cargo check
 docker run --rm -v "${PWD}:/work" -w /work rust:1-bookworm cargo test
 ```
 
-## PostgreSQL administration (first increment)
+## PostgreSQL administration
 
-The **PostgreSQL administration** section in the workbench loads a read-only
-catalog snapshot on demand. It shows databases, role capabilities, role
-memberships, active backend session metadata (without SQL text or client
-addresses), and installed extensions. Each collection is capped at 100 entries.
-Refresh to obtain a new snapshot. PostgreSQL determines which metadata the
-configured role can view.
+The **PostgreSQL administration** section loads a read-only catalog snapshot on demand:
+database and role metadata, memberships, sessions (without SQL text or client
+addresses), extensions, schemas, relations and sizes, index validity/usage,
+constraints, table scan/vacuum statistics, relation locks, safe server settings,
+visible table grants and routine signatures. Each section returns at most 100
+items, clearly labelled when the limit is reached. The server uses fixed,
+read-only PostgreSQL catalog queries. It never returns password hashes or
+arbitrary configuration values.
 
-This section **does not** create users, grant privileges, terminate sessions,
-install extensions or change server settings. Administrators can still execute
-such PostgreSQL statements through the existing SQL console if their configured
-database role has sufficient privileges. GUI workflows for these changes require
-authentication, PostgreSQL TLS and explicit confirmation first; see the
-[administration roadmap](https://github.com/mycaravam-crypto/datawizz/issues/59).
+The **Administration SQL builder** prepares one PostgreSQL statement at a time
+for common tasks:
+
+- Roles: create (NOLOGIN), drop, enable/disable login; grant/revoke membership.
+- Schemas, tables and databases: create/drop schema or database; grant/revoke
+  schema, table or database privileges.
+- Operations: analyze, vacuum, reindex, cancel a query, terminate a session,
+  create/drop an extension.
+
+Identifiers are quoted, privileges selected from fixed allowlists, and process
+IDs validated. The generated SQL is **never executed or posted by the builder**.
+It opens in a new SQL tab, preserving previous drafts. Destructive templates
+require a confirmation before opening; executing a statement still requires an
+explicit click on **Run query**. PostgreSQL privileges govern execution.
+Some commands (for example DROP DATABASE) cannot be run against the active
+database, and DB permissions/locks may reject them.
+
+**Security limitation:** This remains a **single-user development application**,
+with no HTTP authentication or PostgreSQL TLS. Use only on a trusted loopback
+network. The SQL editor already supports arbitrary permitted SQL. The SQL
+builder does not bypass or elevate database rights. Direct write-capable admin
+endpoints, server configuration changes and remote operation remain blocked
+pending the security prerequisites in
+[the administration roadmap](https://github.com/mycaravam-crypto/datawizz/issues/59).
 
 ## Configuration
 
@@ -145,6 +166,6 @@ authentication, PostgreSQL TLS and explicit confirmation first; see the
 
 **Single-user development use only.** HTTP has no authentication; never publish it publicly. The application executes arbitrary SQL with the configured database role's privileges. Use a minimally privileged role and a trusted database.
 
-The current PostgreSQL driver uses `NoTls`: **TLS connections are not implemented yet**. Do not use it across untrusted networks. The row limit caps response memory, not the work performed inside PostgreSQL: extra rows are consumed and discarded until completion or timeout. The application opens a DB connection per request. It does not implement multiple connection profiles, multi-statement scripts, autocomplete, query history, or write-capable administration dialogs. The administration inventory is read-only.
+The current PostgreSQL driver uses `NoTls`: **TLS connections are not implemented yet**. Do not use it across untrusted networks. The row limit caps response memory, not the work performed inside PostgreSQL: extra rows are consumed and discarded until completion or timeout. The application opens a DB connection per request. It does not implement multiple connection profiles, multi-statement scripts, autocomplete, query history, secure remote administration, backup/restore or write-capable administration dialogs. The catalog is read-only and SQL templates are manual-review-only.
 
 The CI Docker build passed on the initial MVP. The new Compose PostgreSQL smoke test still requires local verification. Follow issues #1-#6.
