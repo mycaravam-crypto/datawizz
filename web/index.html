@@ -623,12 +623,12 @@ let accessToken="";
 async function api(path,options){
  const headers=new Headers(options?.headers||{});
  if(accessToken)headers.set("Authorization","Bearer "+accessToken);
- const target=path==="/api/connections"||activeProfileId==="default"?
+ const target=path==="/api/connections"||path.startsWith("/api/managed-connections")||activeProfileId==="default"?
     path:"/profiles/"+activeProfileId+path;
  const profileAtRequest=activeProfileId;
  const r=await fetch(target,{...options,headers});
  if(profileAtRequest!==activeProfileId)throw Error("Discarded response from previous connection");
- const data=await r.json();
+ const data=r.status===204?{}:await r.json();
  if(r.status===401){$("auth-area").hidden=false;accessToken="";}
  if(!r.ok){const err=Error(data.error||"Request failed");err.status=r.status;throw err;}
  return data;
@@ -1530,4 +1530,5 @@ mountRichEditor();
 
 loadObjects();
 </script>
+<script src="/assets/connection-manager.js"></script>
 </body></html>
