@@ -200,3 +200,178 @@ impl ManagedStore {
         self.profiles.read().await.iter().find(|p| p.id == id).cloned()
     }
 }
+
+
+#[derive(Serialize)]
+struct ManagerListing {
+    enabled: bool,
+    profiles: Vec<ProfilePublic>,
+}
+
+async fn manager_list(State(state): State<AppState>) -> Json<ManagerListing> {
+    let Some(store) = &state.managed else {
+        return Json(ManagerListing { enabled: false, profiles: vec![] })
+    };
+    let profiles = store.profiles.read().await.iter().map(ManagedProfile::public).collect();
+    Json(ManagerListing { enabled: true, profiles })
+}
+
+fn enabled(state: &AppState) -> Result<&Arc<ManagedStore>, (StatusCode, Json<ApiError>)> {
+    state.managed.as_ref().ok_or_else(|| api_error(
+        StatusCode::SERVICE_UNAVAILABLE, "Connection Manager requires an access token and server-side store"))
+}
+
+fn selected_state(base: &AppState, item: &ManagedProfile) -> Result<AppState, (StatusCode, Json<ApiError>)> {
+    let tls = verified_pg_tls(&item.tls, item.ca_file.as_deref())
+        .map_err(|_| api_error(StatusCode::BAD_REQUEST, "Invalid profile TLS configuration"))?;
+    let mut selected = base.clone();
+    selected.url = Arc::new(item.url());
+    selected.tls = tls;
+    selected.read_only = item.read_only;
+    Ok(selected)
+}
+
+async fn verify(base: &AppState, item: &ManagedProfile) -> ApiResult<ConnectionStatus> {
+    let selected = selected_state(base, item)?;
+    let probe = async {
+        let client = connect(&selected).await?;
+        let row = client.query_one("SELECT current_database()::text, current_user::text", &[])
+            .await.map_err(|_| connection_error())?;
+        Ok(Json(ConnectionStatus {
+            database: row.get(0), role: row.get(1), read_only: item.read_only,
+        }))
+    };
+    tokio::time::timeout(Duration::from_secs(6), probe).await
+        .map_err(|_| api_error(StatusCode::GATEWAY_TIMEOUT, "Connection test timed out"))?
+}
+
+async fn manager_test(
+    State(state): State<AppState>, Json(form): Json<ProfileForm>
+) -> ApiResult<ConnectionStatus> {
+    let store = enabled(&state)?;
+    let existing = store.get(&form.id).await;
+    let candidate = form_profile(form, existing.as_ref())
+        .map_err(|message| api_error(StatusCode::BAD_REQUEST, message))?;
+    verify(&state, &candidate).await
+}
+
+async fn manager_create(
+    State(state): State<AppState>, Json(form): Json<ProfileForm>
+) -> ApiResult<ConnectionOption> {
+    let store = enabled(&state)?;
+    let mut profiles = store.profiles.write().await;
+    if store.static_ids.contains(&form.id) || profiles.iter().any(|p| p.id == form.id) {
+        return Err(api_error(StatusCode::CONFLICT, "Profile id already exists"))
+    }
+    let candidate = form_profile(form, None)
+        .map_err(|message| api_error(StatusCode::BAD_REQUEST, message))?;
+    verify(&state, &candidate).await?;
+    let mut next = profiles.clone();
+    next.push(candidate.clone());
+    store.persist(&next).map_err(|message| api_error(StatusCode::BAD_REQUEST, message))?;
+    *profiles = next;
+    Ok(Json(candidate.metadata()))
+}
+
+async fn manager_update(
+    State(state): State<AppState>, Path(id): Path<String>, Json(form): Json<ProfileForm>
+) -> ApiResult<ConnectionOption> {
+    let store = enabled(&state)?;
+    if form.id != id {
+        return Err(api_error(StatusCode::BAD_REQUEST, "Profile id cannot be changed"))
+    }
+    let mut profiles = store.profiles.write().await;
+    let index = profiles.iter().position(|p| p.id == id)
+        .ok_or_else(|| api_error(StatusCode::NOT_FOUND, "Managed profile does not exist"))?;
+    let candidate = form_profile(form, Some(&profiles[index]))
+        .map_err(|message| api_error(StatusCode::BAD_REQUEST, message))?;
+    verify(&state, &candidate).await?;
+    let mut next = profiles.clone();
+    next[index] = candidate.clone();
+    store.persist(&next).map_err(|message| api_error(StatusCode::BAD_REQUEST, message))?;
+    *profiles = next;
+    Ok(Json(candidate.metadata()))
+}
+
+async fn manager_remove(
+    State(state): State<AppState>, Path(id): Path<String>
+) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
+    let store = enabled(&state)?;
+    let mut profiles = store.profiles.write().await;
+    if !profiles.iter().any(|p| p.id == id) {
+        return Err(api_error(StatusCode::NOT_FOUND, "Managed profile does not exist"))
+    }
+    let next: Vec<_> = profiles.iter().filter(|p| p.id != id).cloned().collect();
+    store.persist(&next).map_err(|message| api_error(StatusCode::BAD_REQUEST, message))?;
+    *profiles = next;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub(super) fn routes(state: AppState) -> Router {
+    Router::new()
+        .route("/api/managed-connections", get(manager_list).post(manager_create))
+        .route("/api/managed-connections/test", post(manager_test))
+        .route("/api/managed-connections/{id}", put(manager_update).delete(manager_remove))
+        .route_layer(middleware::from_fn_with_state(state.clone(), require_access_token))
+        .with_state(state)
+}
+
+pub(super) async fn dispatch(
+    State(base): State<AppState>, Path((id, tail)): Path<(String, String)>,
+    mut request: Request
+) -> Response {
+    if !tail.trim_start_matches('/').starts_with("api/") {
+        return StatusCode::NOT_FOUND.into_response()
+    }
+    let Some(store) = &base.managed else { return StatusCode::NOT_FOUND.into_response() };
+    let Some(profile) = store.get(&id).await else {
+        return StatusCode::NOT_FOUND.into_response()
+    };
+    let Ok(state) = selected_state(&base, &profile) else {
+        return connection_error().into_response()
+    };
+    let prefix = format!("/profiles/{id}");
+    let original = request.uri().path_and_query().map(|p| p.as_str()).unwrap_or("/");
+    let Some(target) = original.strip_prefix(&prefix) else {
+        return StatusCode::NOT_FOUND.into_response()
+    };
+    let Ok(uri) = target.parse::<Uri>() else { return StatusCode::BAD_REQUEST.into_response() };
+    *request.uri_mut() = uri;
+    api_routes(state).oneshot(request).await.unwrap_or_else(|never| match never {})
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn example() -> ManagedProfile {
+        ManagedProfile {
+            id: "reader".into(), label: "Restricted reader".into(),
+            environment: "test".into(), read_only: true,
+            host: "localhost".into(), port: 5432, database: "data".into(),
+            username: "readonly".into(), password: "secret value@".into(),
+            tls: "disable".into(), ca_file: None,
+        }
+    }
+    #[test]
+    fn rejects_invalid_profiles_and_unsafe_prod_modes() {
+        let mut p = example();
+        assert!(validate(&p).is_ok());
+        p.id = "../bad".into();
+        assert!(validate(&p).is_err());
+        p.id = "prod".into();
+        p.environment = "prod".into();
+        assert!(validate(&p).is_err());
+        p.tls = "verify-full".into();
+        assert!(validate(&p).is_ok());
+        p.read_only = false;
+        assert!(validate(&p).is_err());
+    }
+    #[test]
+    fn public_profile_never_contains_password_or_dsn() {
+        let p = example();
+        let json = serde_json::to_string(&p.public()).unwrap();
+        assert!(!json.contains("secret"));
+        assert!(!json.contains("postgres://"));
+        assert!(p.url().contains("secret%20value%40"));
+    }
+}
