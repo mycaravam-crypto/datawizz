@@ -118,16 +118,24 @@ docker run --rm -v "${PWD}:/work" -w /work rust:1-bookworm cargo test
 
 ## PostgreSQL administration
 
-The **PostgreSQL administration** section loads a read-only catalog snapshot on demand:
+The **Administration** workspace tab uses a database-tool layout inspired by
+DataGrip: a category explorer on the left, the selected catalog as a full-width
+table on the right, and a detail inspector for the selected row. Switch back to
+**SQL console** using the workspace tabs. The administration explorer groups
+**Server objects**, **Database objects**, **Monitoring** and **Tools**. Select
+a category, choose **Load metadata**, and optionally filter the rows of that
+category. Only one catalog table is displayed at a time; the layout stacks
+on narrow screens.
+
+The administration view loads a read-only catalog snapshot on demand:
 database and role metadata, memberships, sessions (without SQL text or client
 addresses), extensions, schemas, relations and sizes, index validity/usage,
 constraints, table scan/vacuum statistics, relation locks, safe server settings,
-visible table grants and routine signatures. Each section returns at most 100
-items, clearly labelled when the limit is reached. The server uses fixed,
-read-only PostgreSQL catalog queries. It never returns password hashes or
-arbitrary configuration values.
+visible table grants and routine signatures. Each category returns at most 100
+items. Fixed read-only PostgreSQL catalog queries never expose password
+hashes or arbitrary configuration values.
 
-The **Administration SQL builder** prepares one PostgreSQL statement at a time
+The **SQL templates** item under Administration → Tools prepares one PostgreSQL statement at a time
 for common tasks:
 
 - Roles: create (NOLOGIN), drop, enable/disable login; grant/revoke membership.

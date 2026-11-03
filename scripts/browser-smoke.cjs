@@ -224,12 +224,35 @@ const server = http.createServer(async (req, res) => {
     assert.equal(await page.locator("#output .grid").count(),0,"Stale table A must not appear after switching to B");
     assert.equal(await page.locator("#selected").innerText(),"public.other");
 
-    // Admin metadata is rendered as text. SQL templates never auto-execute.
+    // DataGrip-style workspace: one visible grid at a time, explorer on the left.
+    await page.locator("#workspace-tab-admin").click();
+    assert.equal(await page.locator("#sql-workspace").isVisible(),false);
+    assert.equal(await page.locator("#admin-workspace").isVisible(),true);
     await page.locator("#admin-refresh").click();
-    await page.locator("#admin-output h3").first().waitFor();
-    assert.equal(await page.locator("#admin-output h3").count(),14);
-    assert.equal(await page.locator("#admin-output img").count(),0,"Catalog data must not create HTML nodes");
+    await page.locator("#admin-output .grid").waitFor();
+    assert.equal(await page.locator("#admin-nav .admin-tree-button").count(),15);
+    assert.equal(await page.locator("#admin-output .grid").count(),1,"Only the selected catalog must be visible");
+    await page.locator("#admin-nav-roles").click();
     await page.locator("#admin-output").getByText("<img src=x onerror=alert(1)>").waitFor();
+    assert.equal(await page.locator("#admin-output img").count(),0,"Catalog data must not create HTML nodes");
+    await page.locator("#admin-output tbody tr").first().click();
+    assert.equal(await page.locator("#admin-detail").isVisible(),true,"Selected row must open details");
+    await page.locator("#admin-section-search").fill("no-matching-role");
+    await page.locator("#admin-output").getByText("No matching records.").waitFor();
+    await page.locator("#admin-section-search").fill("");
+    await page.locator("#admin-nav-indexes").click();
+    assert.equal(await page.locator("#admin-view-title").textContent(),"Indexes");
+    assert.equal(await page.locator("#admin-output .grid").count(),0);
+    await page.setViewportSize({width:700,height:800});
+    const compactNav=await page.locator(".admin-explorer").boundingBox();
+    const compactStage=await page.locator(".admin-stage").boundingBox();
+    assert(compactNav.y<compactStage.y,"Narrow admin workspace stacks navigation above details");
+    await page.setViewportSize({width:1280,height:800});
+    const wideNav=await page.locator(".admin-explorer").boundingBox();
+    const wideStage=await page.locator(".admin-stage").boundingBox();
+    assert(wideNav.x<wideStage.x,"Wide admin workspace places explorer to the left");
+    await page.locator("#admin-sql-nav").click();
+    assert.equal(await page.locator("#admin-sql-view").isVisible(),true);
     let autoExecuted=0;
     await page.route("**/api/query",route=>{autoExecuted++;return route.continue()});
     await page.locator("#admin-task").selectOption("table-grant");
@@ -240,10 +263,12 @@ const server = http.createServer(async (req, res) => {
     await page.locator("#admin-generate").click();
     assert.equal(await page.locator("#admin-sql-preview").textContent(),'GRANT SELECT ON TABLE "public"."orders" TO PUBLIC;');
     await page.locator("#admin-open-sql").click();
+    assert.equal(await page.locator("#workspace-tab-sql").getAttribute("aria-selected"),"true","Generated SQL opens SQL workspace");
     assert.equal(await page.locator("#sql").inputValue(),'GRANT SELECT ON TABLE "public"."orders" TO PUBLIC;');
     assert.equal(autoExecuted,0,"Preparing SQL must not call the query endpoint");
     await page.getByRole("tab",{name:"Query 1"}).click();
     assert.notEqual(await page.locator("#sql").inputValue(),'GRANT SELECT ON TABLE "public"."orders" TO PUBLIC;');
+    await page.locator("#workspace-tab-admin").click();
     await page.locator("#admin-task").selectOption("role-create");
     await page.locator("#admin-field-0").fill('bad"; DROP ROLE admin; --');
     await page.locator("#admin-generate").click();
