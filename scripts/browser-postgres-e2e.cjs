@@ -143,6 +143,11 @@ const { chromium } = require("playwright");
     const rows = await response.json();
     assert.equal(rows.rows[0][1],"after-dialog");
 
+    // Browsing table rows collapses, but does not destroy, the SQL editor.
+    // Reopening is an explicit action before running a new SQL statement.
+    assert.equal(await page.locator("#editor-body").isVisible(),false);
+    await page.locator("#editor-toggle").click();
+    assert.equal(await page.locator("#editor-body").isVisible(),true);
     // Real PostgreSQL EXPLAIN result is displayed as a navigable, text-only plan tree.
     await page.locator("#sql").fill("EXPLAIN (FORMAT JSON) SELECT * FROM public.datawizz_browser_e2e;");
     await page.locator("#run").click();
@@ -312,6 +317,7 @@ const { chromium } = require("playwright");
     assert.equal(erExecutedSql,false,"ER navigation must not execute SQL");
     await page.unroute("**/api/query");
     await page.locator("#workspace-tab-sql").click();
+    if(!await page.locator("#editor-body").isVisible())await page.locator("#editor-toggle").click();
     await page.locator("#sql").fill("SELECT 'must not cross profile boundaries'");
     // Preserve a staged database row as well as the unsaved SQL draft on failed switches.
     await page.waitForFunction(() => !busy);

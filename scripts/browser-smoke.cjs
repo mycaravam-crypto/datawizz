@@ -171,6 +171,8 @@ const server = http.createServer(async (req, res) => {
     const openRowMore=async()=>{if(!await page.locator("#row-more").evaluate(node=>node.open))await page.locator("#row-more summary").click()};
     await page.goto(origin+"?basic-editor=1");
     await page.getByRole("heading",{name:"SQL Workbench"}).waitFor();
+    assert.equal(await page.locator("#csv").evaluate(el=>getComputedStyle(el).opacity),"1",
+      "Disabled actions remain legible instead of fading to low contrast");
     const originalSQL=await page.locator("#sql").inputValue();
     await page.getByRole("button",{name:/New tab/}).click();
     await page.locator("#sql").fill("SELECT tab_two");
@@ -221,9 +223,32 @@ const server = http.createServer(async (req, res) => {
       assert.equal(sizing.badgeVisible,true,"Environment access status remains visible at "+width+"px");
     }
     await page.setViewportSize({width:1280,height:800});
+
     await page.locator("#filter").fill("demo");
+    const unfinishedSQL=await page.locator("#sql").inputValue();
+    const draftTab=await page.locator("#tabs .tab.active").textContent();
     await page.getByRole("button",{name:"Preview public.demo"}).click();
     await page.waitForFunction(() => tableMode && !busy);
+    assert.equal(await page.locator("#sql").inputValue(),unfinishedSQL,
+      "Selecting a table must not overwrite the active SQL draft");
+    assert.equal(await page.locator("#editor-body").isVisible(),false,
+      "Selecting a table focuses the results workspace, not the SQL editor");
+    assert.equal(await page.locator("#sql").evaluate(el=>document.activeElement===el),false,
+      "Selecting a table does not unexpectedly move keyboard focus to SQL");
+    assert.equal(await page.locator("#objects .object.selected").evaluate(el=>document.activeElement===el),true,
+      "Selection rerender must retain keyboard focus on the selected explorer object");
+    assert.equal(await page.locator("#row-edit").evaluate(el=>el.classList.contains("primary")),false,
+      "A disabled Edit row action is not presented as the primary action");
+    assert.match(await page.locator("#row-action-hint").textContent(),/Select exactly one row/);
+    await page.locator("#object-open-sql").click();
+    assert.equal(await page.locator("#editor-body").isVisible(),true,
+      "Open SELECT explicitly reveals the editor");
+    assert.match(await page.locator("#sql").inputValue(),/^SELECT \* FROM "public"\."demo" LIMIT 200;/);
+    await page.getByRole("tab",{name:draftTab,exact:true}).click();
+    assert.equal(await page.locator("#sql").inputValue(),unfinishedSQL,
+      "The existing SQL draft survives opening a generated SELECT in a separate tab");
+    await page.locator("#editor-toggle").click();
+    assert.equal(await page.locator("#editor-body").isVisible(),false);
     assert.equal(await page.locator("#output .grid tbody tr").count()>0,true,
       "Selecting a table automatically loads rows without a manual refresh");
     assert.equal(await page.locator("#edit-mode").isDisabled(),false,
@@ -239,7 +264,7 @@ const server = http.createServer(async (req, res) => {
     await page.locator("#row-edit").waitFor();
     await page.locator("#browse").click();
     await page.waitForFunction(() => !busy);
-    assert.equal(await page.locator("#row-action-hint").textContent().then(s=>s.includes("Select one row")),true,
+    assert.equal(await page.locator("#row-action-hint").textContent().then(s=>s.includes("Select exactly one row")),true,
       "Explains how to edit without relying on disabled-button tooltips");
     assert.equal(await page.locator("#row-edit").isDisabled(),true,"Edit row needs one selected row");
     assert.equal(await page.locator("#output input[aria-label^='Select row']").count()>0,true,
@@ -264,17 +289,27 @@ const server = http.createServer(async (req, res) => {
     await page.locator("#output .editable-cell").first().press("F2");
     await page.locator("#output .cell-editor").press("Enter");
     await page.locator("#changes-count").getByText("1 pending row").waitFor();
-    await openRowMore(); await page.locator("#changes-undo").click();
-    await page.locator("#changes-bar").waitFor({state:"hidden"});
-    await openRowMore(); await page.locator("#changes-redo").click();
+    await page.locator("#changes-undo").click();
+    await page.locator("#changes-count").getByText("All changes undone").waitFor();
+    assert.equal(await page.locator("#changes-bar").isVisible(),true,
+      "Recovery bar remains visible while Redo is possible");
+    assert.equal(await page.locator("#changes-redo").isEnabled(),true,
+      "Redo must remain accessible after undoing the final staged edit");
+    await page.locator("#changes-redo").click();
     await page.locator("#changes-count").getByText("1 pending row").waitFor();
-    await openRowMore(); await page.locator("#changes-undo").click();
-    await page.locator("#changes-bar").waitFor({state:"hidden"});
+    await page.locator("#changes-undo").click();
+    await page.locator("#changes-count").getByText("All changes undone").waitFor();
+    assert.equal(await page.locator("#changes-bar").isVisible(),true,
+      "Recovery bar remains visible while Redo is possible");
+    assert.equal(await page.locator("#changes-redo").isEnabled(),true,
+      "Redo must remain accessible after undoing the final staged edit");
     await cell.focus();
     await cell.press("Enter");
     await page.locator("#output .cell-editor").fill("inline-value");
     await page.locator("#output .cell-editor").press("Enter");
     await page.locator("#changes-count").getByText("1 pending row").waitFor();
+    assert.equal(await page.locator("#changes-bar #changes-undo").isVisible(),true,
+      "Undo is visible beside staged changes, not hidden in More actions");
     assert.equal(await page.locator("#changes-undo").isDisabled(),false);
     // A focused editable cell must support directional keyboard navigation.
     await page.locator("#output .editable-cell").first().focus();
@@ -346,6 +381,8 @@ const server = http.createServer(async (req, res) => {
     await page.locator("#changes-count").getByText("1 pending row").waitFor();
     assert.equal(await page.locator("#output .pending-cell").count(),1,"Conflict retains draft");
     page.once("dialog",dialog=>dialog.accept());
+    // The editor is collapsed in table-browse mode; explicitly reopen it for SQL execution.
+    await page.locator("#editor-toggle").click();
     await page.getByRole("button",{name:"Run query",exact:false}).click();
     await page.locator("#server-pager").waitFor({state:"hidden"});
     assert.equal(await page.locator("#server-pager").isVisible(),false,"Free SQL hides server pager");
@@ -464,6 +501,7 @@ const server = http.createServer(async (req, res) => {
     assert.equal(await page.locator("#admin-sql-preview").textContent(),'GRANT SELECT ON TABLE "public"."orders" TO PUBLIC;');
     await page.locator("#admin-open-sql").click();
     assert.equal(await page.locator("#workspace-tab-sql").getAttribute("aria-selected"),"true","Generated SQL opens SQL workspace");
+    assert.equal(await page.locator("#editor-body").isVisible(),true,"Generated SQL must reveal the editable SQL console");
     assert.equal(await page.locator("#sql").inputValue(),'GRANT SELECT ON TABLE "public"."orders" TO PUBLIC;');
     assert.equal(autoExecuted,0,"Preparing SQL must not call the query endpoint");
     await page.getByRole("tab",{name:"Query 1"}).click();
