@@ -631,16 +631,16 @@ function historyStep(direction){const source=direction==="undo"?undoStack:redoSt
 
 function stagedRows(){return [...changes.entries()].map(([index,change])=>({index,...change}))}
 function updateChanges(){
- const count=changes.size,canRedo=redoStack.length>0,bar=$("changes-bar");
- // Undoing the last edit must not hide the only way to redo it.
- bar.hidden=!count&&!canRedo;
- text($("changes-count"),count?count+" pending row"+(count===1?"":"s"):"All changes undone");
- text($("changes-note"),count?"Staged locally · not saved yet":"Nothing is staged. Redo restores the last edit.");
+ const count=changes.size,canUndo=undoStack.length>0,canRedo=redoStack.length>0,bar=$("changes-bar");
+ // Keep recovery visible even if the user undoes or manually reverts the last edit.
+ bar.hidden=!count&&!canUndo&&!canRedo;
+ text($("changes-count"),count?count+" pending row"+(count===1?"":"s"):canRedo?"All changes undone":"No pending edits");
+ text($("changes-note"),count?"Staged locally · not saved yet":canRedo?"Nothing is staged. Redo restores the last edit.":"Nothing is staged. Undo restores the previous edit.");
  $("changes-save").hidden=!count;
  $("changes-discard").hidden=!count;
  $("changes-save").disabled=!count||busy;
  $("changes-discard").disabled=!count||busy;
- $("changes-undo").disabled=!undoStack.length||busy;
+ $("changes-undo").disabled=!canUndo||busy;
  $("changes-redo").disabled=!canRedo||busy;
 }
 function discardChanges(){changes.clear();resetEditHistory();updateChanges();if(last)renderResults()}
