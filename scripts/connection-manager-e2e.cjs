@@ -17,6 +17,7 @@ const headers = {Authorization: "Bearer " + token};
   await page.locator("#auth-unlock").click();
   await page.locator("#auth-area").waitFor({state:"hidden"});
 
+  await page.locator("#app-menu summary").click();
   await page.locator("#manage-connections").click();
   await page.locator("#manager-dialog").waitFor({state:"visible"});
   await page.locator("#manager-id").fill("managed-qa");
@@ -59,6 +60,7 @@ const headers = {Authorization: "Bearer " + token};
   assert(objects.some(o=>o.name==="profile_only"));
   assert(!objects.some(o=>o.name==="datawizz_browser_e2e"));
 
+  await page.locator("#app-menu summary").click();
   await page.locator("#manage-connections").click();
   await page.locator("#manager-profiles button").first().click();
   assert.equal(await page.locator("#manager-password").inputValue(),"");
