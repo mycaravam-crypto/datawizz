@@ -564,7 +564,10 @@ async fn prepare_browse(
         }
         if let (Some(name), Some(text)) = (column, value.filter(|text| !text.is_empty())) {
             // A literal case-insensitive substring: %, _ and # are not wildcards.
-            let escaped = text.replace('#', "##").replace('%', "#%").replace('_', "#_");
+            let escaped = text
+                .replace('#', "##")
+                .replace('%', "#%")
+                .replace('_', "#_");
             filter_patterns.push(format!("%{escaped}%"));
             predicates.push(format!(
                 "source.{}::text ILIKE ${} ESCAPE '#'",
@@ -573,7 +576,11 @@ async fn prepare_browse(
             ));
         }
     }
-    if req.sort_column.as_deref().is_some_and(|name| !valid_column(name)) {
+    if req
+        .sort_column
+        .as_deref()
+        .is_some_and(|name| !valid_column(name))
+    {
         return Err(api_error(StatusCode::BAD_REQUEST, "Invalid sort column"));
     }
     let direction = req.sort_dir.as_deref().unwrap_or("asc");
@@ -658,7 +665,10 @@ async fn table_rows(
         .iter()
         .map(|pattern| pattern as &(dyn tokio_postgres::types::ToSql + Sync))
         .collect();
-    let db_rows = client.query(&sql, &params).await.map_err(|e| postgres_error(&e))?;
+    let db_rows = client
+        .query(&sql, &params)
+        .await
+        .map_err(|e| postgres_error(&e))?;
     let mut rows: Vec<Vec<Option<String>>> = db_rows
         .iter()
         .map(|row| {
