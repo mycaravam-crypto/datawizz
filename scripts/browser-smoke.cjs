@@ -168,6 +168,7 @@ const server = http.createServer(async (req, res) => {
   try {
     const page=await browser.newPage({viewport:{width:1280,height:800},acceptDownloads:true});
     const origin="http://127.0.0.1:"+server.address().port;
+    const openRowMore=async()=>{if(!await page.locator("#row-more").evaluate(node=>node.open))await page.locator("#row-more summary").click()};
     await page.goto(origin+"?basic-editor=1");
     await page.getByRole("heading",{name:"SQL Workbench"}).waitFor();
     const originalSQL=await page.locator("#sql").inputValue();
@@ -196,8 +197,30 @@ const server = http.createServer(async (req, res) => {
     assert.equal(await page.locator("#output tbody tr").count(),1,"Filter shows one loaded row");
     await page.locator("#result-filter").fill("");
     assert.equal(await page.locator("#output tbody tr").count(),3,"Filter reset shows all rows");
+    await page.locator("#app-menu summary").click();
     await page.locator("#theme").click();
     assert.equal(await page.locator("html").getAttribute("data-theme"),"light");
+    // Top-level navigation has a single compact tab strip; connection context remains visible.
+    assert.equal(await page.locator(".topbar #workspace-tab-sql").count(),1);
+    assert.equal(await page.locator(".topbar #workspace-tab-admin").count(),1);
+    assert.equal(await page.locator("#profile-environment").isVisible(),true);
+    assert.equal(await page.locator("#manage-connections").isVisible(),false,
+      "Connection management belongs to Settings");
+    // Navigation remains usable without horizontal overflow at tablet and phone widths.
+    for(const width of [768,390]){
+      await page.setViewportSize({width,height:844});
+      const header=page.locator(".topbar");
+      const sizing=await header.evaluate(el=>{
+        const tab=el.querySelector(".workspace-switcher"),badge=el.querySelector("#profile-environment");
+        const bounds=el.getBoundingClientRect(),nav=tab.getBoundingClientRect();
+        return {overflow:el.scrollWidth>el.clientWidth+1,within:nav.right<=bounds.right+1&&nav.left>=bounds.left-1,
+          badgeVisible:badge.getBoundingClientRect().width>0};
+      });
+      assert.equal(sizing.overflow,false,"Top navigation must not overflow at "+width+"px");
+      assert.equal(sizing.within,true,"Workspace tabs must stay inside header at "+width+"px");
+      assert.equal(sizing.badgeVisible,true,"Environment access status remains visible at "+width+"px");
+    }
+    await page.setViewportSize({width:1280,height:800});
     await page.locator("#filter").fill("demo");
     await page.getByRole("button",{name:"Preview public.demo"}).click();
     await page.waitForFunction(() => tableMode && !busy);
@@ -241,11 +264,11 @@ const server = http.createServer(async (req, res) => {
     await page.locator("#output .editable-cell").first().press("F2");
     await page.locator("#output .cell-editor").press("Enter");
     await page.locator("#changes-count").getByText("1 pending row").waitFor();
-    await page.locator("#changes-undo").click();
+    await openRowMore(); await page.locator("#changes-undo").click();
     await page.locator("#changes-bar").waitFor({state:"hidden"});
-    await page.locator("#changes-redo").click();
+    await openRowMore(); await page.locator("#changes-redo").click();
     await page.locator("#changes-count").getByText("1 pending row").waitFor();
-    await page.locator("#changes-undo").click();
+    await openRowMore(); await page.locator("#changes-undo").click();
     await page.locator("#changes-bar").waitFor({state:"hidden"});
     await cell.focus();
     await cell.press("Enter");
@@ -259,9 +282,13 @@ const server = http.createServer(async (req, res) => {
     assert.equal(await page.locator("#output .editable-cell:focus").count(),1);
 
     await page.locator("#output input[aria-label^='Select row']").first().check();
+    assert.equal(await page.locator("#row-actions .table-edit-actions > button").count(),2,
+      "Only Edit row and Edit cells remain as direct row-edit actions");
+    assert.equal(await page.locator("#row-delete").isVisible(),false);
     assert.equal(await page.locator("#row-edit").isDisabled(),true,
       "Direct edit is blocked while staged changes exist");
     assert.match(await page.locator("#row-action-hint").textContent(),/Review & save or discard/);
+    await openRowMore();
     await page.locator("#bulk-toggle").click();
     await page.locator("#selection-bar").waitFor({state:"visible"});
     await page.locator("#bulk-column").selectOption("1");
@@ -581,6 +608,7 @@ const server = http.createServer(async (req, res) => {
     // Data Explorer 2.0: database-side filter/sort, bounded full export, no SQL write.
     await page.locator("#filter").fill("");
     await page.getByRole("button",{name:"Preview public.demo"}).click();
+    await page.locator("#table-options summary").click();
     await page.locator("#table-filter-column").waitFor({state:"visible"});
     await page.waitForFunction(() => document.querySelectorAll("#table-filter-column option").length>1);
     await page.locator("#table-filter-column").selectOption("label");
