@@ -6,6 +6,8 @@ const { chromium } = require("playwright");
 
 const html = fs.readFileSync("web/index.html", "utf8");
 let rejectNextChangeset = false;
+let largeErFixture = false;
+let emptyErFixture = false;
 let delayNextBrowse = false;
 let releaseBrowse = null;
 const server = http.createServer(async (req, res) => {
@@ -21,7 +23,9 @@ const server = http.createServer(async (req, res) => {
       databases:[{name:"test",owner:"test",allow_connections:true}],
       roles:[{name:"<img src=x onerror=alert(1)>",can_login:false,superuser:false,create_db:false,create_role:false}],
       memberships:[],sessions:[],extensions:[],schemas:[],
-      relations:[{schema:"public",name:"demo_view",kind:"view",owner:"test",estimated_rows:0,size_bytes:0,definition:"SELECT id FROM public.demo"}],
+      relations:[{schema:"public",name:"demo_view",kind:"view",owner:"test",estimated_rows:0,size_bytes:0,definition:"SELECT id FROM public.demo"},
+        {schema:"public",name:"demo",kind:"table",owner:"test",estimated_rows:0,size_bytes:0},
+        {schema:"public",name:"other",kind:"table",owner:"test",estimated_rows:0,size_bytes:0}],
       indexes:[{schema:"public",table:"demo",name:"demo_idx",valid:true,scans:0,definition:"CREATE INDEX demo_idx ON public.demo USING btree (id)"}],
       constraints:[],table_stats:[],locks:[],settings:[],privileges:[],routines:[]
     }));
@@ -29,10 +33,24 @@ const server = http.createServer(async (req, res) => {
     res.end(JSON.stringify([{id:"default",label:"Default PostgreSQL",engine:"postgresql",environment:"dev",read_only:false}]));
   } else if (req.url === "/api/connection-status") {
     res.end(JSON.stringify({database:"test",role:"test",read_only:false}));
+  } else if (req.url === "/api/test-er-large") {
+    largeErFixture=true;emptyErFixture=false;
+    res.end(JSON.stringify({enabled:true}));
+  } else if (req.url === "/api/test-er-reset") {
+    largeErFixture=false;emptyErFixture=false;
+    res.end(JSON.stringify({enabled:false}));
+  } else if (req.url === "/api/test-er-empty") {
+    largeErFixture=false;emptyErFixture=true;
+    res.end(JSON.stringify({enabled:true}));
   } else if (req.url === "/api/relationships") {
-    res.end(JSON.stringify([{from_schema:"public",from_table:"demo",to_schema:"public",
+    const edges=emptyErFixture?[]:largeErFixture?Array.from({length:80},(_,i)=>({
+      from_schema:"public",from_table:"table_"+i%40,
+      to_schema:"public",to_table:"table_"+(i+1)%40,
+      constraint:"fk_"+i,definition:"FOREIGN KEY (id) REFERENCES public.table_"+(i+1)%40+"(id)"
+    })): [{from_schema:"public",from_table:"demo",to_schema:"public",
       to_table:"other",constraint:'fk_<img src=x onerror=alert(1)>',
-      definition:"FOREIGN KEY (other_id) REFERENCES other(id)"}]));
+      definition:"FOREIGN KEY (other_id) REFERENCES other(id)"}];
+    res.end(JSON.stringify(edges));
   } else if (req.url === "/api/schema") {
     res.end(JSON.stringify([{schema:"public",name:"demo",kind:"table"},{schema:"public",name:"other",kind:"table"}]));
   } else if (req.url.startsWith("/api/columns")) {
@@ -318,6 +336,44 @@ const server = http.createServer(async (req, res) => {
     await page.locator("#admin-nav-relations").click();
     await page.locator("#admin-output tbody tr").first().click();
     assert.match(await page.locator("#admin-detail .admin-ddl-preview").textContent(),/^CREATE VIEW "public"."demo_view" AS/);
+    // ER navigation is read-only, keyboard-operable, zoomable and backed by a text table.
+    await page.locator("#admin-er-nav").click();
+    await page.locator("#er-accessible tbody tr").first().waitFor();
+    assert.equal(await page.locator("#er-diagram").getAttribute("role"),"region");
+    assert.equal(await page.locator("#er-diagram").getAttribute("tabindex"),"0");
+    assert.equal(await page.locator("#er-accessible caption").count(),1);
+    assert.equal(await page.locator("#er-accessible img").count(),0,"FK names cannot inject HTML");
+    const nativeWidth=Number(await page.locator("#er-diagram svg").getAttribute("width"));
+    await page.locator("#er-zoom-in").click();
+    assert(Number(await page.locator("#er-diagram svg").getAttribute("width"))>nativeWidth);
+    await page.locator("#er-zoom-reset").click();
+    assert.equal(Number(await page.locator("#er-diagram svg").getAttribute("width")),nativeWidth);
+    await page.locator("#er-diagram").focus();
+    await page.keyboard.press("+");
+    assert.equal(await page.locator("#er-scale").textContent(),"125%");
+    await page.keyboard.press("0");
+    assert.equal(await page.locator("#er-scale").textContent(),"100%");
+    const erNode=page.locator('#er-diagram .er-node[aria-label="Inspect relation public.demo"]');
+    await erNode.focus();await erNode.press("Enter");
+    assert.equal(await page.locator("#admin-view-title").textContent(),"Relations");
+    assert.match(await page.locator("#admin-detail").textContent(),/demo/);
+    await page.locator("#admin-er-nav").click();
+    await page.locator('#er-accessible button[aria-label="Inspect target relation public.other"]').click();
+    assert.equal(await page.locator("#admin-view-title").textContent(),"Relations");
+    assert.match(await page.locator("#admin-detail").textContent(),/other/);
+    await page.evaluate(()=>fetch("/api/test-er-large"));
+    await page.locator("#admin-er-nav").click();
+    await page.locator("#er-refresh").click();
+    await page.waitForFunction(()=>document.querySelectorAll("#er-diagram .er-node").length===40);
+    assert.equal(await page.locator("#er-accessible tbody tr").count(),80);
+    await page.locator("#er-fit").click();
+    await page.locator("#er-diagram").focus();
+    await page.keyboard.press("ArrowDown");
+    const scrollY=await page.locator("#er-diagram").evaluate(panel=>panel.scrollTop);
+    assert(scrollY>0,"Keyboard arrows must pan the viewport on large ER diagrams");
+    await page.evaluate(()=>fetch("/api/test-er-reset"));
+    await page.locator("#er-refresh").click();
+    await page.waitForFunction(()=>document.getElementById("er-status").textContent.startsWith("1 relationships"));
     await page.setViewportSize({width:700,height:800});
     const compactNav=await page.locator(".admin-explorer").boundingBox();
     const compactStage=await page.locator(".admin-stage").boundingBox();
@@ -534,6 +590,12 @@ const server = http.createServer(async (req, res) => {
     assert.equal(await page.locator("#er-accessible img").count(),0);
     assert.equal(await page.locator("#er-diagram img").count(),0);
     assert.match(await page.locator("#er-accessible").textContent(),/fk_<img src=x onerror=alert\(1\)>/);
+    await page.evaluate(()=>fetch("/api/test-er-empty"));
+    await page.locator("#er-refresh").click();
+    await page.waitForFunction(()=>document.getElementById("er-status").textContent==="No foreign keys");
+    assert.equal(await page.locator("#er-diagram svg").count(),0);
+    assert.equal(await page.locator("#er-zoom-in").isDisabled(),true,"No zoom on an empty graph");
+    assert.match(await page.locator("#er-accessible").textContent(),/No visible foreign keys/);
     assert.equal(await page.locator("#connection-chooser").isDisabled(),true,
       "Single-profile default preserves the no-switch behavior");
     // Rich editor is the default. PostgreSQL highlighting and key bindings remain offline.
