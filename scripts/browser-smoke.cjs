@@ -78,6 +78,11 @@ const server = http.createServer(async (req, res) => {
       }else{
         let data=[["1","Alpha_One"],["2","Beta%Two"],["3","alpha_Three"],["4","=1+1"]];
         if(params.has("filter"))data=data.filter(row=>row[1].toLowerCase().includes(filter.toLowerCase()));
+        if(params.has("filter2")){
+          const column=params.get("filter2_column"),value=params.get("filter2").toLowerCase();
+          assert(["id","label"].includes(column));
+          data=data.filter(row=>row[column==="id"?0:1].toLowerCase().includes(value));
+        }
         if(params.get("sort_column")==="label")
           data.sort((a,b)=>params.get("sort_dir")==="desc"?b[1].localeCompare(a[1]):a[1].localeCompare(b[1]));
         res.end(JSON.stringify({columns:["id","label"],rows:data.slice(offset,offset+limit),offset,limit,has_next:offset+limit<data.length,stable_order:true}));
@@ -103,7 +108,12 @@ const server = http.createServer(async (req, res) => {
       }
       if(!res.destroyed){
         const cells=[["1","Alpha_One"],["2","Beta%Two"],["3","alpha_Three"],["4","=1+1"]];
-        const rows=filter?cells.filter(row=>row[1].toLowerCase().includes(filter.toLowerCase())):cells;
+        let rows=filter?cells.filter(row=>row[1].toLowerCase().includes(filter.toLowerCase())):cells;
+        if(params.has("filter2")){
+          const column=params.get("filter2_column"),value=params.get("filter2").toLowerCase();
+          assert(["id","label"].includes(column));
+          rows=rows.filter(row=>row[column==="id"?0:1].toLowerCase().includes(value));
+        }
         const escape=value=>'"'+String(value).replace(/^[\s\uFEFF\u200B]*[=+@-]/u,match=>"'"+match).replaceAll('"','""')+'"';
         const csv="\uFEFF"+[["id","label"],...rows].map(row=>row.map(escape).join(",")).join("\r\n");
         res.setHeader("Content-Type","text/csv; charset=utf-8");
@@ -588,6 +598,25 @@ const server = http.createServer(async (req, res) => {
     assert.equal(await page.locator("#output").getByText("Alpha_One",{exact:true}).count(),1);
     assert.equal(await page.locator("#output").getByText("Beta%Two",{exact:true}).count(),0);
     assert.equal(await page.locator("#output .grid tbody tr").count(),2);
+    // Two database-side conditions are AND-connected in paging and CSV export.
+    await page.locator("#table-filter2-value").fill("3");
+    await page.locator("#table-apply").click();
+    await page.locator("#message").getByText(/Choose the second filter column/).waitFor();
+    await page.locator("#table-filter2-column").selectOption("id");
+    const andResponse=page.waitForResponse(r=>r.url().includes("/api/table-rows?")&&
+      r.url().includes("filter2=3"));
+    await page.locator("#table-apply").click();
+    const combined=await andResponse;
+    assert.equal(new URL(combined.url()).searchParams.get("filter2_column"),"id");
+    await page.locator("#output").getByText("alpha_Three",{exact:true}).waitFor();
+    assert.equal(await page.locator("#output .grid tbody tr").count(),1);
+    const filteredDownload=page.waitForEvent("download");
+    await page.locator("#table-export").click();
+    const filteredCsv=fs.readFileSync(await (await filteredDownload).path(),"utf8");
+    assert(filteredCsv.includes("alpha_Three"));
+    assert(!filteredCsv.includes("Alpha_One"),"Snapshot export must apply second filter");
+    await page.locator("#table-filter2-value").fill("");
+    await page.locator("#table-filter2-column").selectOption("");
     // Filter a formula-like value; downloaded CSV must be spreadsheet-safe.
     await page.locator("#table-filter-value").fill("=1+1");
     await page.locator("#table-apply").click();
