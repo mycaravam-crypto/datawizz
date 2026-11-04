@@ -501,6 +501,7 @@ const server = http.createServer(async (req, res) => {
     assert.equal(await page.locator("#admin-sql-preview").textContent(),'GRANT SELECT ON TABLE "public"."orders" TO PUBLIC;');
     await page.locator("#admin-open-sql").click();
     assert.equal(await page.locator("#workspace-tab-sql").getAttribute("aria-selected"),"true","Generated SQL opens SQL workspace");
+    assert.equal(await page.locator("#editor-body").isVisible(),true,"Generated SQL must reveal the editable SQL console");
     assert.equal(await page.locator("#sql").inputValue(),'GRANT SELECT ON TABLE "public"."orders" TO PUBLIC;');
     assert.equal(autoExecuted,0,"Preparing SQL must not call the query endpoint");
     await page.getByRole("tab",{name:"Query 1"}).click();
