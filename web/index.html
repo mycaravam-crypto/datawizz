@@ -1009,7 +1009,7 @@ async function run(){
   status(result.truncated?"Truncated":"Completed",result.truncated?"warning":"success");
    addQueryHistory(submittedSql,"Success",result.duration_ms);
   }catch(e){addQueryHistory(submittedSql,"Failed",null);last=null;output.replaceChildren(element("div","error-box",e.message));info("Query failed.");status("Error","error");text($("result-note"),"Review the statement and try again.")}
- finally{busy=false;$("run").disabled=false;text($("run"),"▶ Run query")}}
+ finally{busy=false;$("run").disabled=false;text($("run"),"▶ Run query");updateSelection()}}
 $("result-filter").addEventListener("input",()=>{page=0;renderResults()});
 $("result-filter-clear").onclick=()=>{$("result-filter").value="";page=0;renderResults();$("result-filter").focus()};
 $("result-filter").addEventListener("keydown",e=>{if(e.key==="Escape"&&e.currentTarget.value){e.preventDefault();$("result-filter-clear").click()}});
