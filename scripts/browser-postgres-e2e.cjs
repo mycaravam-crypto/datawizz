@@ -317,6 +317,7 @@ const { chromium } = require("playwright");
     assert.equal(erExecutedSql,false,"ER navigation must not execute SQL");
     await page.unroute("**/api/query");
     await page.locator("#workspace-tab-sql").click();
+    if(!await page.locator("#editor-body").isVisible())await page.locator("#editor-toggle").click();
     await page.locator("#sql").fill("SELECT 'must not cross profile boundaries'");
     // Preserve a staged database row as well as the unsaved SQL draft on failed switches.
     await page.waitForFunction(() => !busy);
