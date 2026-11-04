@@ -237,10 +237,24 @@ again because it is only retained in memory.
 
 The selector also checks the server-side database name/role. Administration
 → Tools → **ER relationships** renders a bounded, read-only graph based on
-foreign-key metadata (at most 80 constraints and 40 graph nodes) and an
-accessible text table. Only relationships whose source and target tables are
-both readable to the active PostgreSQL role are returned. The graph does not
+foreign-key metadata (at most 80 constraints and 40 graph nodes), alongside
+a keyboard-accessible relationship table. Only relationships whose source and
+target tables are both readable to the active PostgreSQL role are returned.
+
+**Diagram navigation:** Use Zoom in/out, Reset (100%) or Fit width. Focus
+the diagram with Tab; arrow keys pan its scrollable viewport, +/− change zoom
+and 0 resets zoom. Diagram nodes support Enter/Space and pointer activation.
+The alternative relationship table provides explicit, focusable source/target
+buttons. Both open the relation in the existing Administration → Relations
+inspector, if it is present in the bounded catalog results. Identifiers are
+rendered as text, not interpreted as HTML. Opening an object does not
 generate or execute SQL.
+
+**Limits:** The diagram is an overview, not a full schema modeler; 40 nodes
+are plotted and up to 80 visible foreign keys are listed. Relationships whose
+endpoints fall outside the plotted nodes remain available in the table.
+The catalog inspector can show only relations included in its bounded
+metadata response. Reload metadata if an object cannot be located.
 
 **Limits:** No SSH tunnels, writable production profiles, cross-profile
 query execution, consistent sessions across requests, or interactive drag-and-drop
