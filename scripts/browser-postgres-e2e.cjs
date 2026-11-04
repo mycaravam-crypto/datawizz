@@ -173,12 +173,41 @@ const { chromium } = require("playwright");
     await page.waitForFunction(() => !busy && tableMode);
     await page.locator("#output").getByText("after-dialog",{exact:true}).waitFor();
     assert.equal(await page.locator("#output .grid tbody tr").count(),1);
+    // PostgreSQL E2E: a second catalog-validated AND filter is applied on the server.
+    await page.locator("#table-filter2-column").selectOption("id");
+    await page.locator("#table-filter2-value").fill("999");
+    await page.locator("#table-apply").click();
+    await page.waitForFunction(()=>!busy && tableMode);
+    assert.equal(await page.locator("#output .grid tbody tr").count(),0);
+    await page.locator("#table-filter2-value").fill("1");
+    const compoundResponse=page.waitForResponse(r=>r.url().includes("/api/table-rows?")&&
+      r.url().includes("filter2=1"));
+    await page.locator("#table-apply").click();
+    const compoundQuery=new URL((await compoundResponse).url()).searchParams;
+    assert.equal(compoundQuery.get("filter2_column"),"id");
+    await page.locator("#output").getByText("after-dialog",{exact:true}).waitFor();
+    assert.equal(await page.locator("#output .grid tbody tr").count(),1);
     const tokenHeaders={Authorization:"Bearer 0123456789abcdefghijklmnopqrstuvwxyz"};
     const url=(changes)=>"http://127.0.0.1:3188/api/table-rows?"+
       new URLSearchParams({schema:"public",table:"datawizz_browser_e2e",limit:"20",offset:"0",...changes});
     const filteredRows=await page.request.get(url({filter_column:"label",filter:"after-dialog",sort_column:"label",sort_dir:"desc"}),{headers:tokenHeaders});
     assert.equal(filteredRows.status(),200);
     assert.equal((await filteredRows.json()).rows.length,1);
+    const compoundRows=await page.request.get(url({
+      filter_column:"label",filter:"after-dialog",
+      filter2_column:"id",filter2:"999",sort_column:"label",sort_dir:"desc"
+    }),{headers:tokenHeaders});
+    assert.equal(compoundRows.status(),200);
+    assert.equal((await compoundRows.json()).rows.length,0);
+    const invalidSecond=await page.request.get(url({
+      filter_column:"label",filter:"after-dialog",
+      filter2_column:"id) OR TRUE --",filter2:"1"
+    }),{headers:tokenHeaders});
+    assert.equal(invalidSecond.status(),400);
+    const missingSecondColumn=await page.request.get(url({
+      filter_column:"label",filter:"after-dialog",filter2:"1"
+    }),{headers:tokenHeaders});
+    assert.equal(missingSecondColumn.status(),400);
     const badColumn=await page.request.get(url({filter_column:"label) OR true--",filter:"after-dialog"}),{headers:tokenHeaders});
     assert.equal(badColumn.status(),400);
     const badSort=await page.request.get(url({sort_column:"label",sort_dir:"desc; DROP TABLE x"}),{headers:tokenHeaders});
@@ -195,12 +224,15 @@ const { chromium } = require("playwright");
     assert(download,"Export reported success but no browser download was emitted: "+exportMessage);
     assert.equal(download.suggestedFilename(),"datawizz-filtered-table.csv");
     const fs=require("node:fs");
-    assert(fs.readFileSync(await download.path(),"utf8").includes("after-dialog"));
+    const downloadedCsv=fs.readFileSync(await download.path(),"utf8");
+    assert(downloadedCsv.includes("after-dialog"));
+    assert(!downloadedCsv.includes("before"),"Snapshot CSV must match the active filters");
     // API download is authenticated, rejects injected identifiers and returns CSV.
     const exportApi="http://127.0.0.1:3188/api/table-export?";
     const exportParams=new URLSearchParams({
       schema:"public",table:"datawizz_browser_e2e",
-      filter_column:"label",filter:"after-dialog",sort_column:"id",sort_dir:"asc"
+      filter_column:"label",filter:"after-dialog",
+      filter2_column:"id",filter2:"1",sort_column:"id",sort_dir:"asc"
     });
     const serverExport=await page.request.get(exportApi+exportParams,{headers:tokenHeaders});
     assert.equal(serverExport.status(),200);
