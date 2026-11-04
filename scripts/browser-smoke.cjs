@@ -190,6 +190,11 @@ const server = http.createServer(async (req, res) => {
     assert.equal(await page.locator("html").getAttribute("data-theme"),"light");
     await page.locator("#filter").fill("demo");
     await page.getByRole("button",{name:"Preview public.demo"}).click();
+    await page.waitForFunction(() => tableMode && !busy);
+    assert.equal(await page.locator("#output .grid tbody tr").count()>0,true,
+      "Selecting a table automatically loads rows without a manual refresh");
+    assert.equal(await page.locator("#edit-mode").isDisabled(),false,
+      "Inline edit option is available after loading a table with a primary key");
     await page.locator("#insert").click();
     await page.locator("#insert-dialog").waitFor({state:"visible"});
     await page.locator('#insert-fields input[data-default-field="0"]').isChecked();
@@ -201,6 +206,11 @@ const server = http.createServer(async (req, res) => {
     await page.locator("#row-edit").waitFor();
     await page.locator("#browse").click();
     await page.waitForFunction(() => !busy);
+    assert.equal(await page.locator("#row-action-hint").textContent().then(s=>s.includes("Select one row")),true,
+      "Explains how to edit without relying on disabled-button tooltips");
+    assert.equal(await page.locator("#row-edit").isDisabled(),true,"Edit row needs one selected row");
+    assert.equal(await page.locator("#output input[aria-label^='Select row']").count()>0,true,
+      "Rows are selectable before inline edit mode is enabled");
     await page.locator("#edit-mode").click();
     await page.locator("#output .grid tbody tr").first().waitFor();
     // A previously rendered grid can be visible while the new browse request is still busy.
@@ -239,6 +249,9 @@ const server = http.createServer(async (req, res) => {
     assert.equal(await page.locator("#output .editable-cell:focus").count(),1);
 
     await page.locator("#output input[aria-label^='Select row']").first().check();
+    assert.equal(await page.locator("#row-edit").isDisabled(),true,
+      "Direct edit is blocked while staged changes exist");
+    assert.match(await page.locator("#row-action-hint").textContent(),/Review & save or discard/);
     await page.locator("#bulk-toggle").click();
     await page.locator("#selection-bar").waitFor({state:"visible"});
     await page.locator("#bulk-column").selectOption("1");
@@ -258,7 +271,8 @@ const server = http.createServer(async (req, res) => {
     await page.locator("#server-page-info").getByText(/Database rows 1/).waitFor();
     await page.locator("#browse").click();
     await page.waitForFunction(() => !busy);
-    await page.locator("#edit-mode").click();
+    assert.equal(await page.locator("#edit-mode").getAttribute("aria-pressed"),"true",
+      "Refreshing rows must retain edit mode");
     await page.locator("#output input[aria-label^='Select row']").first().check();
     await page.locator("#row-edit").click();
     await page.locator("#row-dialog").waitFor({state:"visible"});
@@ -278,10 +292,14 @@ const server = http.createServer(async (req, res) => {
     await page.unroute("**/api/row-change");
     await page.locator("#server-next").click();
     await page.locator("#server-page-info").getByText(/Database rows 101/).waitFor();
+    await page.waitForFunction(() => !busy);
+    assert.equal(await page.locator("#browse").isEnabled(),true,
+      "Refresh rows is re-enabled after legacy server paging completes");
     await page.evaluate(()=>fetch("/api/test-conflict"));
     await page.locator("#browse").click();
     await page.waitForFunction(() => !busy);
-    await page.locator("#edit-mode").click();
+    assert.equal(await page.locator("#edit-mode").getAttribute("aria-pressed"),"true",
+      "Refresh after paging must retain inline edit mode");
     await page.locator("#output .editable-cell").first().dblclick();
     await page.locator("#output .cell-editor").fill("retry-value");
     await page.locator("#output .cell-editor").press("Enter");
@@ -294,6 +312,20 @@ const server = http.createServer(async (req, res) => {
     await page.getByRole("button",{name:"Run query",exact:false}).click();
     await page.locator("#server-pager").waitFor({state:"hidden"});
     assert.equal(await page.locator("#server-pager").isVisible(),false,"Free SQL hides server pager");
+    await page.waitForFunction(() => !busy);
+    assert.equal(await page.locator("#browse").isEnabled(),true,
+      "Loading table rows is available again after a successful SQL query");
+    assert.match(await page.locator("#row-action-hint").textContent(),/SQL results are read-only/,
+      "The interface explains why SQL result rows cannot be edited");
+    await page.route("**/api/query",route=>route.fulfill({
+      status:500,contentType:"application/json",body:JSON.stringify({error:"Simulated SQL failure"})
+    }));
+    await page.getByRole("button",{name:/Run query/}).click();
+    await page.getByText("Query failed.").waitFor();
+    await page.waitForFunction(() => !busy);
+    assert.equal(await page.locator("#browse").isEnabled(),true,
+      "Loading table rows remains available after a failed SQL query");
+    await page.unroute("**/api/query");
     await page.evaluate(()=>fetch("/api/delay-browse"));
     await page.locator("#browse").click();
     await page.locator("#filter").fill("");
