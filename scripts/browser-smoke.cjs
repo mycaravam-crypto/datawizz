@@ -7,6 +7,7 @@ const { chromium } = require("playwright");
 const html = fs.readFileSync("web/index.html", "utf8");
 let rejectNextChangeset = false;
 let largeErFixture = false;
+let emptyErFixture = false;
 let delayNextBrowse = false;
 let releaseBrowse = null;
 const server = http.createServer(async (req, res) => {
