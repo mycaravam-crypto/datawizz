@@ -992,7 +992,7 @@ async function loadTablePage(){
   info(data.rows.length+" table rows loaded; filters and CSV apply to this page only.");
   status("Page loaded","success");text($("result-note"),"Server paging: each request loads at most 100 rows. CSV contains current loaded page only.");
  }catch(e){if(token===tableRequest){output.replaceChildren(element("div","error-box",e.message));info("Unable to load table page.");status("Error","error")}}
- finally{busy=false;$("browse-table").disabled=!selected;$("run").disabled=false}
+ finally{busy=false;$("browse-table").disabled=!selected;$("run").disabled=false;updateSelection()}
 }
 $("browse-table").onclick=()=>{tablePage=null;loadTablePage()};
 $("server-prev").onclick=()=>{if(tablePage&&tablePage.offset>0){tablePage.offset=Math.max(0,tablePage.offset-100);loadTablePage()}};
