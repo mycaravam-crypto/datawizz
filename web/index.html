@@ -200,6 +200,8 @@
 @media(max-width:670px){.topbar{padding:10px 12px;gap:8px}.brand{font-size:17px}.top-actions{gap:6px}.top-actions .environment-tag{display:inline-flex}.connection-control .input{width:clamp(120px,37vw,180px)}.environment-tag{font-size:10px;padding:4px 6px}.topbar .workspace-switcher{display:flex;gap:4px}.topbar .workspace-tab{flex:1;text-align:center}.app-menu>summary{padding:6px 8px}.page-heading h1{font-size:21px}.results-header .result-utilities{justify-content:flex-start}.results-header .filter-bar input{width:150px}#row-actions{padding:9px 12px}.action-menu-panel{right:0}}
 @media(max-width:400px){.topbar{grid-template-columns:1fr}.top-actions{justify-self:stretch;grid-row:2;flex-wrap:wrap}.topbar .workspace-switcher{grid-row:3;grid-column:1}.connection-control{flex:1}.connection-control .input{width:100%}}
 
+/* Keep disabled actions legible. Dashed borders communicate unavailability without opacity loss. */
+.btn:disabled{opacity:1;color:var(--muted);background:var(--raised);border:1px dashed var(--border)}
 /* Task-focused exploration: the data grid is primary when browsing a table. */
 #editor-body[hidden],#object-open-sql[hidden]{display:none!important}
 #object-open-sql{margin-top:12px;width:100%;white-space:normal;line-height:1.4}
