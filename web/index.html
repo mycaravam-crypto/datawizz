@@ -1147,48 +1147,123 @@ function svgPart(name,attrs={},content){
  if(content!==undefined)node.textContent=String(content);
  return node;
 }
+let erSvg=null,erBaseWidth=930,erBaseHeight=0,erZoom=1;
+function erKey(schema,name){return schema+"\u001f"+name}
+function erControls(enabled){
+ for(const id of ["er-zoom-in","er-zoom-out","er-zoom-reset","er-fit"])$(id).disabled=!enabled;
+}
+function erSetZoom(next){
+ if(!erSvg)return;
+ const panel=$("er-diagram"),old=erZoom;
+ erZoom=Math.max(.5,Math.min(2.5,Math.round(next*100)/100));
+ const focusX=panel.scrollLeft+panel.clientWidth/2,focusY=panel.scrollTop+panel.clientHeight/2;
+ erSvg.setAttribute("width",Math.round(erBaseWidth*erZoom));
+ erSvg.setAttribute("height",Math.round(erBaseHeight*erZoom));
+ panel.scrollLeft=Math.max(0,focusX*erZoom/old-panel.clientWidth/2);
+ panel.scrollTop=Math.max(0,focusY*erZoom/old-panel.clientHeight/2);
+ text($("er-scale"),Math.round(erZoom*100)+"%");
+}
+$("er-zoom-in").onclick=()=>erSetZoom(erZoom+.25);
+$("er-zoom-out").onclick=()=>erSetZoom(erZoom-.25);
+$("er-zoom-reset").onclick=()=>erSetZoom(1);
+$("er-fit").onclick=()=>{
+ const panel=$("er-diagram");
+ erSetZoom(Math.max(.5,Math.min(2.5,(panel.clientWidth-32)/erBaseWidth)));
+ panel.scrollLeft=0;panel.scrollTop=0;
+};
+$("er-diagram").addEventListener("keydown",e=>{
+ if(!erSvg||e.altKey||e.ctrlKey||e.metaKey)return;
+ const panel=$("er-diagram"),step=96;
+ if(e.key==="ArrowLeft"){e.preventDefault();panel.scrollLeft-=step}
+ else if(e.key==="ArrowRight"){e.preventDefault();panel.scrollLeft+=step}
+ else if(e.key==="ArrowUp"){e.preventDefault();panel.scrollTop-=step}
+ else if(e.key==="ArrowDown"){e.preventDefault();panel.scrollTop+=step}
+ else if(e.key==="+"||e.key==="="){e.preventDefault();erSetZoom(erZoom+.25)}
+ else if(e.key==="-"){e.preventDefault();erSetZoom(erZoom-.25)}
+ else if(e.key==="0"){e.preventDefault();erSetZoom(1)}
+});
+async function erInspectObject(schema,name){
+ try{
+  if(!adminData)adminData=await api("/api/admin",{cache:"no-store"});
+  const all=adminData.relations||[];
+  if(!all.some(item=>item.schema===schema&&item.name===name)){
+   text($("er-status"),"Object details are outside the available catalog page.");
+   return;
+  }
+  selectAdminView("relations");
+  $("admin-section-search").value=name;
+  renderAdminView();
+  const fields=adminSections.find(section=>section.id==="relations").fields;
+  const filtered=all.filter(item=>fields.some(([key])=>
+    adminDisplayValue(item[key]).toLocaleLowerCase().includes(name.toLocaleLowerCase())));
+  const index=filtered.findIndex(item=>item.schema===schema&&item.name===name);
+  const row=$("admin-output").querySelectorAll("tbody tr")[index];
+  if(row){row.click();row.focus();row.scrollIntoView({block:"nearest"})}
+ }catch{
+  text($("er-status"),"Object details unavailable. Retry loading metadata.");
+ }
+}
 async function loadRelationships(){
  const button=$("er-refresh"),panel=$("er-diagram"),accessible=$("er-accessible");
  button.disabled=true;text($("er-status"),"Loading foreign keys…");
- panel.replaceChildren();accessible.replaceChildren();
+ panel.replaceChildren();accessible.replaceChildren();erSvg=null;erZoom=1;
+ text($("er-scale"),"100%");erControls(false);
  try{
   const edges=await api("/api/relationships");
   if(!Array.isArray(edges))throw Error("Invalid ER response");
   const selectedEdges=edges.slice(0,80);
-  const tableNames=[...new Set(selectedEdges.flatMap(e=>[e.from_schema+"."+e.from_table,
-   e.to_schema+"."+e.to_table]))].slice(0,40);
-  if(!tableNames.length){
+  const nodes=[],seen=new Set();
+  for(const edge of selectedEdges){
+   for(const [schema,name] of [[edge.from_schema,edge.from_table],[edge.to_schema,edge.to_table]]){
+    const key=erKey(schema,name);
+    if(!seen.has(key)&&nodes.length<40){seen.add(key);nodes.push({schema,name,key,label:schema+"."+name})}
+   }
+  }
+  if(!nodes.length){
    panel.append(element("p","note","No visible foreign-key relationships. Tables without foreign keys are not included."));
+   accessible.append(element("p","note","No visible foreign keys to navigate."));
    text($("er-status"),"No foreign keys");return;
   }
-  const pos=new Map(tableNames.map((name,i)=>[name,{
+  const pos=new Map(nodes.map((node,i)=>[node.key,{
     x:12+(i%3)*310,y:20+Math.floor(i/3)*104}]));
-  const svg=svgPart("svg",{viewBox:"0 0 930 "+(Math.ceil(tableNames.length/3)*104+32),
-    width:930,height:Math.ceil(tableNames.length/3)*104+32,role:"img",
-    "aria-label":"PostgreSQL foreign key relationships"});
+  erBaseHeight=Math.ceil(nodes.length/3)*104+32;
+  const svg=svgPart("svg",{viewBox:"0 0 930 "+erBaseHeight,
+    width:930,height:erBaseHeight,role:"group",
+    "aria-label":"Interactive PostgreSQL foreign key relationships"});
   const defs=svgPart("defs"),marker=svgPart("marker",{id:"er-arrow",
     viewBox:"0 0 10 10",refX:9,refY:5,markerWidth:5,markerHeight:5,orient:"auto-start-reverse"});
   marker.append(svgPart("path",{d:"M 0 0 L 10 5 L 0 10 z",fill:"#8191a6"}));
   defs.append(marker);svg.append(defs);
   let omitted=0;
   for(const edge of selectedEdges){
-   const from=pos.get(edge.from_schema+"."+edge.from_table),to=pos.get(edge.to_schema+"."+edge.to_table);
+   const from=pos.get(erKey(edge.from_schema,edge.from_table)),
+    to=pos.get(erKey(edge.to_schema,edge.to_table));
    if(!from||!to){omitted++;continue}
    const line=svgPart("line",{x1:from.x+140,y1:from.y+30,x2:to.x+140,y2:to.y+30,
     stroke:"#8191a6","stroke-width":1.3,"marker-end":"url(#er-arrow)"});
    line.append(svgPart("title",{},edge.definition));svg.append(line);
   }
-  for(const name of tableNames){
-   const {x,y}=pos.get(name);
-   svg.append(svgPart("rect",{x,y,width:288,height:60,rx:7,
+  for(const node of nodes){
+   const {x,y}=pos.get(node.key),name=node.label;
+   const group=svgPart("g",{class:"er-node",role:"button",tabindex:0,
+     "aria-label":"Inspect relation "+name});
+   group.append(svgPart("title",{},name));
+   group.append(svgPart("rect",{x,y,width:288,height:60,rx:7,
       fill:"#223143",stroke:"#8294ad","stroke-width":1}));
-   svg.append(svgPart("text",{x:x+10,y:y+25,fill:"#f6f8fc","font-size":13,
+   group.append(svgPart("text",{x:x+10,y:y+25,fill:"#f6f8fc","font-size":13,
       "font-family":"sans-serif"},name.length>39?name.slice(0,38)+"…":name));
-   svg.append(svgPart("text",{x:x+10,y:y+45,fill:"#cad6e5","font-size":11,
+   group.append(svgPart("text",{x:x+10,y:y+45,fill:"#cad6e5","font-size":11,
       "font-family":"sans-serif"},"PostgreSQL relation"));
+   group.addEventListener("click",()=>erInspectObject(node.schema,node.name));
+   group.addEventListener("keydown",e=>{
+    if(e.key==="Enter"||e.key===" "){e.preventDefault();e.stopPropagation();
+     erInspectObject(node.schema,node.name)}
+   });
+   svg.append(group);
   }
-  panel.append(svg);
+  panel.append(svg);erSvg=svg;erControls(true);erSetZoom(1);
   const table=element("table"),thead=element("thead"),head=element("tr");
+  table.append(element("caption","","Foreign key relationships. Select a source or target relation to inspect its metadata."));
   for(const label of ["From table","Foreign key","To table","Definition"]){
    const th=element("th","",label);th.scope="col";head.append(th);
   }
@@ -1196,12 +1271,19 @@ async function loadRelationships(){
   const tbody=element("tbody");
   for(const e of selectedEdges){
    const row=element("tr");
-   for(const value of [e.from_schema+"."+e.from_table,e.constraint,
-    e.to_schema+"."+e.to_table,e.definition])row.append(element("td","",value));
+   for(const [schema,name,side] of [[e.from_schema,e.from_table,"source"],[e.to_schema,e.to_table,"target"]]){
+    const cell=element("td"),button=element("button","",schema+"."+name);
+    button.type="button";
+    button.setAttribute("aria-label","Inspect "+side+" relation "+schema+"."+name);
+    button.onclick=()=>erInspectObject(schema,name);
+    cell.append(button);
+    if(side==="source"){row.append(cell,element("td","",e.constraint))}
+    else{row.append(cell,element("td","",e.definition))}
+   }
    tbody.append(row);
   }
   table.append(tbody);accessible.append(table);
-  text($("er-status"),selectedEdges.length+" relationships · "+tableNames.length+
+  text($("er-status"),selectedEdges.length+" relationships · "+nodes.length+
    " diagram nodes"+(omitted?" · "+omitted+" edges omitted from diagram":""));
  }catch(e){
   text($("er-status"),"Unable to load foreign keys: "+e.message);
