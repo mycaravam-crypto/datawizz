@@ -171,6 +171,8 @@ const server = http.createServer(async (req, res) => {
     const openRowMore=async()=>{if(!await page.locator("#row-more").evaluate(node=>node.open))await page.locator("#row-more summary").click()};
     await page.goto(origin+"?basic-editor=1");
     await page.getByRole("heading",{name:"SQL Workbench"}).waitFor();
+    assert.equal(await page.locator("#csv").evaluate(el=>getComputedStyle(el).opacity),"1",
+      "Disabled actions remain legible instead of fading to low contrast");
     const originalSQL=await page.locator("#sql").inputValue();
     await page.getByRole("button",{name:/New tab/}).click();
     await page.locator("#sql").fill("SELECT tab_two");
