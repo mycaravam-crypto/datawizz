@@ -228,7 +228,16 @@ and the dedicated row mutation APIs fail with HTTP 403. **A database role
 with only SELECT privileges is still mandatory** for production: server-side
 read-only mode is defense-in-depth, not a replacement for least privilege.
 The initial default `DATABASE_URL` remains writable for local compatibility.
-Switching profiles confirms loss of unsaved edits, then reloads the page.
+Before switching profiles, the browser makes an authenticated, time-bounded,
+read-only connection-status request to the selected destination and shows the
+verified database, PostgreSQL role and read-only status in its confirmation
+dialog. If the target is unavailable, the status is malformed, authentication
+fails, or the user cancels, the existing profile remains active and unsaved SQL
+tabs, staged edits, history and metadata stay intact. A successful confirmed
+switch discards those unsaved changes and reloads the page. Connectivity can
+still change between the preflight and the next request; if it does, use the
+connection selector to return to a working profile.
+
 Only the nonsensitive selected **profile id** is kept in tab-scoped
 `sessionStorage`; access tokens, query history, loaded rows and editor tabs
 are not persisted across switches. Previously saved scripts remain explicitly
