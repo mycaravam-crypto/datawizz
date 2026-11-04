@@ -242,11 +242,58 @@ accessible text table. Only relationships whose source and target tables are
 both readable to the active PostgreSQL role are returned. The graph does not
 generate or execute SQL.
 
-**Limits:** No SSH tunnels, arbitrary user-created runtime profiles, writable
-production profiles, cross-profile query execution, consistent sessions across
-requests, or interactive drag-and-drop schema modeling. Use HTTPS and
+**Limits:** No SSH tunnels, writable production profiles, cross-profile
+query execution, consistent sessions across requests, or interactive drag-and-drop
+schema modeling. Opt-in user-managed profiles are described below. Use HTTPS and
 external access control before exposing this application outside trusted
 loopback networking. The default Docker Compose setup remains local-only.
+
+## Connection Manager 2.0 (opt-in, #72)
+
+The **Manage** button next to the connection selector tests, adds, edits, and
+deletes server-managed PostgreSQL profiles without restarting the server.
+The default connection and environment-defined `DATABASE_PROFILES_JSON`
+profiles remain immutable in the manager. Profile changes to the active
+workspace require confirmation and discard unsaved SQL/staged changes.
+
+To enable the Connection Manager for local Docker development:
+
+```sh
+export DATAWIZZ_ACCESS_TOKEN="$(openssl rand -hex 32)"
+docker compose -f compose.yaml -f compose.manager.yaml up -d --build
+```
+
+Open http://127.0.0.1:3000, unlock using that token, then click **Manage**.
+The opt-in Compose override mounts a persistent Docker named volume at
+`/var/lib/datawizz`. The application stores profiles at
+`/var/lib/datawizz/profiles.json`. A direct Cargo launch can instead set an
+absolute `DATAWIZZ_PROFILE_STORE` path and `DATAWIZZ_ACCESS_TOKEN`.
+
+**Credential handling:** Passwords, DSNs and CA paths are never returned
+by profile-list APIs. The password field remains blank when editing; leaving
+it blank retains the server-side value. Secrets are transmitted only over
+authenticated API requests. The server writes the file atomically with 0600
+permissions and runs as an unprivileged OS user. **The store is not encrypted
+at rest**: restrict access to the Docker volume, host filesystem and backups.
+Never place it in a Git repository. Credentials and tokens are not stored in
+browser localStorage or sessionStorage. Plain HTTP is acceptable only
+for trusted loopback development; remote use needs an authenticated HTTPS
+boundary, as described in `docs/remote-security.md`.
+
+Connection test and save perform bounded PostgreSQL connectivity checks;
+failed tests do not overwrite saved profiles. The manager validates identifiers
+and environment settings, and keeps production profiles read-only with
+verified PostgreSQL TLS. Production database roles must independently enforce
+least privilege. The total limit is seven additional profiles, including
+existing server-defined profiles. New profiles are available immediately
+under `/profiles/<id>/api/...`; deletion revokes new routing requests.
+
+**Limits:** PostgreSQL only; no SSH tunnels, secret vault, browser-side
+password recovery, cross-profile transactions or automatic production writes.
+In-flight requests that started before a profile edit are not retroactively
+cancelled. The default disposable PostgreSQL database remains temporary,
+but the connection-manager volume persists. Do not run
+`docker compose down -v` unless deleting stored profiles is intended.
 
 ## SQL Editor 2.0 (Issue #70)
 

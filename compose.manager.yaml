@@ -1,0 +1,12 @@
+# Opt-in Connection Manager 2.0. Default compose.yaml stays local-only.
+# Supply DATAWIZZ_ACCESS_TOKEN with at least 32 random characters.
+services:
+  app:
+    environment:
+      DATAWIZZ_ACCESS_TOKEN: ${DATAWIZZ_ACCESS_TOKEN:?Set a long random DATAWIZZ_ACCESS_TOKEN before starting Connection Manager}
+      DATAWIZZ_PROFILE_STORE: /var/lib/datawizz/profiles.json
+    volumes:
+      - datawizz-profile-store:/var/lib/datawizz
+
+volumes:
+  datawizz-profile-store:
