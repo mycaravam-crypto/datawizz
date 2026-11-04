@@ -1196,6 +1196,7 @@ document.addEventListener("keydown",e=>{if((e.ctrlKey||e.metaKey)&&e.shiftKey&&e
 $("run").onclick=run;sql.addEventListener("keydown",e=>{if(e.key==="Enter"&&(e.ctrlKey||e.metaKey)){e.preventDefault();run()}if(e.key==="Tab"&&!e.shiftKey){e.preventDefault();const start=sql.selectionStart;sql.setRangeText("  ",start,sql.selectionEnd,"end")}});
 function showWorkspace(view){
  const admin=view==="admin";
+ if(!admin)setEditorExpanded(true); // Navigating to SQL must reveal its primary editor.
  $("sql-workspace").hidden=admin;$("admin-workspace").hidden=!admin;
  for(const name of ["sql","admin"]){
   const tab=$("workspace-tab-"+name),selected=name===view;
