@@ -274,9 +274,15 @@ impl ManagedStore {
         if bytes.len() > 64 * 1024 {
             return Err("Profile store exceeds 64 KiB".into());
         }
+        // Never reuse a predictable PID-only temporary name. A previous crash
+        // may have left that file behind (often PID 1 inside a container).
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| "Unable to allocate profile store temporary file")?
+            .as_nanos();
         let temporary = self
             .path
-            .with_extension(format!("{}.tmp", std::process::id()));
+            .with_extension(format!("{}.{nonce}.tmp", std::process::id()));
         let mut options = OpenOptions::new();
         options.write(true).create_new(true);
         #[cfg(unix)]
@@ -550,6 +556,45 @@ mod tests {
         assert!(validate(&p).is_ok());
         p.read_only = false;
         assert!(validate(&p).is_err());
+    }
+    #[test]
+    fn persistence_is_not_blocked_by_crash_leftovers() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "datawizz-manager-test-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir(&root).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let path = root.join("profiles.json");
+        // Simulate a previous interrupted write from a process with the same PID.
+        let stale = path.with_extension(format!("{}.tmp", std::process::id()));
+        fs::write(&stale, "interrupted write").unwrap();
+        let existing = [ConnectionOption {
+            id: "default".into(),
+            label: "Default".into(),
+            engine: "postgresql".into(),
+            environment: "dev".into(),
+            read_only: false,
+        }];
+        let store = ManagedStore::load(path.to_str().unwrap(), &existing).unwrap();
+        store.persist(&[example()]).unwrap();
+        let reloaded = ManagedStore::load(path.to_str().unwrap(), &existing).unwrap();
+        assert_eq!(reloaded.profiles.try_read().unwrap().len(), 1);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+        assert!(stale.exists());
+        fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn public_profile_never_contains_password_or_dsn() {
