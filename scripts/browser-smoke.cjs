@@ -196,6 +196,21 @@ const server = http.createServer(async (req, res) => {
     assert.equal(await page.locator("#profile-environment").isVisible(),true);
     assert.equal(await page.locator("#manage-connections").isVisible(),false,
       "Connection management belongs to Settings");
+    // Navigation remains usable without horizontal overflow at tablet and phone widths.
+    for(const width of [768,390]){
+      await page.setViewportSize({width,height:844});
+      const header=page.locator(".topbar");
+      const sizing=await header.evaluate(el=>{
+        const tab=el.querySelector(".workspace-switcher"),badge=el.querySelector("#profile-environment");
+        const bounds=el.getBoundingClientRect(),nav=tab.getBoundingClientRect();
+        return {overflow:el.scrollWidth>el.clientWidth+1,within:nav.right<=bounds.right+1&&nav.left>=bounds.left-1,
+          badgeVisible:badge.getBoundingClientRect().width>0};
+      });
+      assert.equal(sizing.overflow,false,"Top navigation must not overflow at "+width+"px");
+      assert.equal(sizing.within,true,"Workspace tabs must stay inside header at "+width+"px");
+      assert.equal(sizing.badgeVisible,true,"Environment access status remains visible at "+width+"px");
+    }
+    await page.setViewportSize({width:1280,height:800});
     await page.locator("#filter").fill("demo");
     await page.getByRole("button",{name:"Preview public.demo"}).click();
     await page.waitForFunction(() => tableMode && !busy);
