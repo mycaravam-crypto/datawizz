@@ -1148,7 +1148,7 @@ function svgPart(name,attrs={},content){
  return node;
 }
 let erSvg=null,erBaseWidth=960,erBaseHeight=0,erZoom=1;
-function erKey(schema,name){return schema+"\u001f"+name}
+function erKey(schema,name){return JSON.stringify([schema,name])}
 function erControls(enabled){
  for(const id of ["er-zoom-in","er-zoom-out","er-zoom-reset","er-fit"])$(id).disabled=!enabled;
 }
