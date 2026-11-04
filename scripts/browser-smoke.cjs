@@ -34,13 +34,16 @@ const server = http.createServer(async (req, res) => {
   } else if (req.url === "/api/connection-status") {
     res.end(JSON.stringify({database:"test",role:"test",read_only:false}));
   } else if (req.url === "/api/test-er-large") {
-    largeErFixture=true;
+    largeErFixture=true;emptyErFixture=false;
     res.end(JSON.stringify({enabled:true}));
   } else if (req.url === "/api/test-er-reset") {
-    largeErFixture=false;
+    largeErFixture=false;emptyErFixture=false;
     res.end(JSON.stringify({enabled:false}));
+  } else if (req.url === "/api/test-er-empty") {
+    largeErFixture=false;emptyErFixture=true;
+    res.end(JSON.stringify({enabled:true}));
   } else if (req.url === "/api/relationships") {
-    const edges=largeErFixture?Array.from({length:80},(_,i)=>({
+    const edges=emptyErFixture?[]:largeErFixture?Array.from({length:80},(_,i)=>({
       from_schema:"public",from_table:"table_"+i%40,
       to_schema:"public",to_table:"table_"+(i+1)%40,
       constraint:"fk_"+i,definition:"FOREIGN KEY (id) REFERENCES public.table_"+(i+1)%40+"(id)"
@@ -587,6 +590,12 @@ const server = http.createServer(async (req, res) => {
     assert.equal(await page.locator("#er-accessible img").count(),0);
     assert.equal(await page.locator("#er-diagram img").count(),0);
     assert.match(await page.locator("#er-accessible").textContent(),/fk_<img src=x onerror=alert\(1\)>/);
+    await page.evaluate(()=>fetch("/api/test-er-empty"));
+    await page.locator("#er-refresh").click();
+    await page.waitForFunction(()=>document.getElementById("er-status").textContent==="No foreign keys");
+    assert.equal(await page.locator("#er-diagram svg").count(),0);
+    assert.equal(await page.locator("#er-zoom-in").isDisabled(),true,"No zoom on an empty graph");
+    assert.match(await page.locator("#er-accessible").textContent(),/No visible foreign keys/);
     assert.equal(await page.locator("#connection-chooser").isDisabled(),true,
       "Single-profile default preserves the no-switch behavior");
     // Rich editor is the default. PostgreSQL highlighting and key bindings remain offline.
