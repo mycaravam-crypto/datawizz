@@ -262,7 +262,7 @@ const server = http.createServer(async (req, res) => {
     await page.locator("#row-edit").waitFor();
     await page.locator("#browse").click();
     await page.waitForFunction(() => !busy);
-    assert.equal(await page.locator("#row-action-hint").textContent().then(s=>s.includes("Select one row")),true,
+    assert.equal(await page.locator("#row-action-hint").textContent().then(s=>s.includes("Select exactly one row")),true,
       "Explains how to edit without relying on disabled-button tooltips");
     assert.equal(await page.locator("#row-edit").isDisabled(),true,"Edit row needs one selected row");
     assert.equal(await page.locator("#output input[aria-label^='Select row']").count()>0,true,
