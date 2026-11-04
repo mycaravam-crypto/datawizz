@@ -164,6 +164,9 @@ const { chromium } = require("playwright");
     // Server-side search is independent from the currently loaded 100-row page.
     await page.locator("#filter").fill("datawizz_browser_e2e");
     await page.getByRole("button",{name:"Preview public.datawizz_browser_e2e"}).click();
+    // Database-wide filters are secondary controls, collapsed by default.
+    if(!await page.locator("#table-options").evaluate(node=>node.open))
+      await page.locator("#table-options summary").click();
     await page.waitForFunction(() => document.querySelectorAll("#table-filter-column option").length>1);
     await page.locator("#table-filter-column").selectOption("label");
     await page.locator("#table-filter-value").fill("after-dialog");
