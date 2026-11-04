@@ -471,6 +471,8 @@ struct PageRequest {
     limit: Option<i64>,
     filter_column: Option<String>,
     filter: Option<String>,
+    filter2_column: Option<String>,
+    filter2: Option<String>,
     sort_column: Option<String>,
     sort_dir: Option<String>,
 }
@@ -494,7 +496,7 @@ fn quote_ident(name: &str) -> String {
 struct PreparedBrowse {
     columns: Vec<String>,
     select_sql: String,
-    filter_pattern: Option<String>,
+    filter_patterns: Vec<String>,
     stable_order: bool,
 }
 
@@ -546,48 +548,44 @@ async fn prepare_browse(
         ));
     }
     let valid_column = |name: &str| columns.iter().any(|col| col == name);
-    if req
-        .filter_column
-        .as_deref()
-        .is_some_and(|name| !valid_column(name))
-        || req
-            .sort_column
-            .as_deref()
-            .is_some_and(|name| !valid_column(name))
-    {
-        return Err(api_error(
-            StatusCode::BAD_REQUEST,
-            "Invalid filter or sort column",
-        ));
+    let mut predicates = Vec::new();
+    let mut filter_patterns = Vec::new();
+    // At most two AND-connected literal substring filters. Every column name
+    // originates in pg_catalog, while all user-controlled text is bound.
+    for (column, value) in [
+        (req.filter_column.as_deref(), req.filter.as_deref()),
+        (req.filter2_column.as_deref(), req.filter2.as_deref()),
+    ] {
+        if column.is_some_and(|name| !valid_column(name))
+            || value.is_some_and(|text| text.chars().count() > 200)
+            || (value.is_some_and(|text| !text.is_empty()) && column.is_none())
+        {
+            return Err(api_error(StatusCode::BAD_REQUEST, "Invalid table filter"));
+        }
+        if let (Some(name), Some(text)) = (column, value.filter(|text| !text.is_empty())) {
+            // A literal case-insensitive substring: %, _ and # are not wildcards.
+            let escaped = text.replace('#', "##").replace('%', "#%").replace('_', "#_");
+            filter_patterns.push(format!("%{escaped}%"));
+            predicates.push(format!(
+                "source.{}::text ILIKE ${} ESCAPE '#'",
+                quote_ident(name),
+                filter_patterns.len()
+            ));
+        }
     }
-    if req
-        .filter
-        .as_deref()
-        .is_some_and(|value| value.chars().count() > 200)
-        || (req.filter.as_deref().is_some_and(|value| !value.is_empty())
-            && req.filter_column.is_none())
-    {
-        return Err(api_error(StatusCode::BAD_REQUEST, "Invalid table filter"));
+    if req.sort_column.as_deref().is_some_and(|name| !valid_column(name)) {
+        return Err(api_error(StatusCode::BAD_REQUEST, "Invalid sort column"));
     }
     let direction = req.sort_dir.as_deref().unwrap_or("asc");
     if !matches!(direction, "asc" | "desc") || (req.sort_column.is_none() && req.sort_dir.is_some())
     {
         return Err(api_error(StatusCode::BAD_REQUEST, "Invalid sort direction"));
     }
-    let filter = req.filter.as_deref().filter(|value| !value.is_empty());
-    let predicate = if let (Some(col), Some(_)) = (&req.filter_column, filter) {
-        format!(" WHERE {}::text ILIKE $1 ESCAPE '#'", quote_ident(col))
-    } else {
+    let predicate = if predicates.is_empty() {
         String::new()
+    } else {
+        format!(" WHERE {}", predicates.join(" AND "))
     };
-    // A literal case-insensitive substring: %, _ and # are not wildcards.
-    let filter_pattern = filter.map(|value| {
-        let escaped = value
-            .replace('#', "##")
-            .replace('%', "#%")
-            .replace('_', "#_");
-        format!("%{escaped}%")
-    });
     let stable_order = !keys.is_empty();
     let mut ordering = Vec::new();
     if let Some(name) = &req.sort_column {
@@ -630,7 +628,7 @@ async fn prepare_browse(
             quote_ident(&schema),
             quote_ident(&table)
         ),
-        filter_pattern,
+        filter_patterns,
         stable_order,
     })
 }
@@ -655,12 +653,12 @@ async fn table_rows(
         limit + 1,
         offset
     );
-    let db_rows = if let Some(pattern) = &prepared.filter_pattern {
-        client.query(&sql, &[pattern]).await
-    } else {
-        client.query(&sql, &[]).await
-    }
-    .map_err(|e| postgres_error(&e))?;
+    let params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = prepared
+        .filter_patterns
+        .iter()
+        .map(|pattern| pattern as &(dyn tokio_postgres::types::ToSql + Sync))
+        .collect();
+    let db_rows = client.query(&sql, &params).await.map_err(|e| postgres_error(&e))?;
     let mut rows: Vec<Vec<Option<String>>> = db_rows
         .iter()
         .map(|row| {
@@ -691,6 +689,8 @@ struct ExportRequest {
     table: String,
     filter_column: Option<String>,
     filter: Option<String>,
+    filter2_column: Option<String>,
+    filter2: Option<String>,
     sort_column: Option<String>,
     sort_dir: Option<String>,
 }
@@ -781,16 +781,18 @@ async fn table_export(
         limit: None,
         filter_column: req.filter_column,
         filter: req.filter,
+        filter2_column: req.filter2_column,
+        filter2: req.filter2,
         sort_column: req.sort_column,
         sort_dir: req.sort_dir,
     };
     let prepared = prepare_browse(&client, &page).await?;
     let sql = format!("{} LIMIT {}", prepared.select_sql, EXPORT_MAX_ROWS + 1);
     let params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = prepared
-        .filter_pattern
-        .as_ref()
-        .map(|s| vec![s as &(dyn tokio_postgres::types::ToSql + Sync)])
-        .unwrap_or_default();
+        .filter_patterns
+        .iter()
+        .map(|pattern| pattern as &(dyn tokio_postgres::types::ToSql + Sync))
+        .collect();
     let rows = client
         .query_raw(&sql, params)
         .await
@@ -1936,6 +1938,8 @@ mod tests {
             table: "datawizz_csv_export_test".into(),
             filter_column: Some("label".into()),
             filter: Some("%_#".into()),
+            filter2_column: None,
+            filter2: None,
             sort_column: Some("id".into()),
             sort_dir: Some("desc".into()),
         };
@@ -1967,6 +1971,8 @@ mod tests {
                 table: "datawizz_csv_export_test".into(),
                 filter_column: None,
                 filter: None,
+                filter2_column: None,
+                filter2: None,
                 sort_column: Some("id".into()),
                 sort_dir: Some("asc".into()),
             }),
@@ -1993,6 +1999,8 @@ mod tests {
                 table: "datawizz_csv_export_test".into(),
                 filter_column: Some("id); DROP TABLE x; --".into()),
                 filter: Some("1".into()),
+                filter2_column: None,
+                filter2: None,
                 sort_column: None,
                 sort_dir: None,
             }),
@@ -2033,6 +2041,8 @@ mod tests {
                 table: "datawizz_csv_export_quota".into(),
                 filter_column: None,
                 filter: None,
+                filter2_column: None,
+                filter2: None,
                 sort_column: None,
                 sort_dir: None,
             }),
@@ -2361,6 +2371,8 @@ mod tests {
                 limit: Some(10),
                 filter_column: None,
                 filter: None,
+                filter2_column: None,
+                filter2: None,
                 sort_column: None,
                 sort_dir: None,
             }),
@@ -2759,6 +2771,8 @@ mod tests {
             limit: Some(20),
             filter_column: None,
             filter: None,
+            filter2_column: None,
+            filter2: None,
             sort_column: None,
             sort_dir: None,
         };
@@ -2868,6 +2882,8 @@ mod tests {
             limit: Some(10),
             filter_column: None,
             filter: None,
+            filter2_column: None,
+            filter2: None,
             sort_column: None,
             sort_dir: None,
         };
@@ -2959,6 +2975,8 @@ mod tests {
             limit: Some(100),
             filter_column: None,
             filter: None,
+            filter2_column: None,
+            filter2: None,
             sort_column: None,
             sort_dir: None,
         };
@@ -3007,6 +3025,8 @@ mod tests {
             limit: Some(2),
             filter_column: Some("label".into()),
             filter: Some(value.into()),
+            filter2_column: None,
+            filter2: None,
             sort_column: Some("id".into()),
             sort_dir: Some(sort_dir.into()),
         };
