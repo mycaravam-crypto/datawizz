@@ -384,16 +384,21 @@ under #70.
 
 ## Data Explorer 2.0 — database filters, ordering and bounded export
 
-Select a table or view, then use **Filter column**, **Contains**, **Sort by**
-and **Direction** above the grid. Click **Apply to database**, or click a table
-column heading to change server-side ordering. Results are fetched from
-PostgreSQL, not just filtered within the loaded 100-row page. The API accepts
-only catalog-validated column names, `asc`/`desc` directions and bound filter
-values. Filters use **case-insensitive literal substring** matching against
-PostgreSQL's text representation (including numbers and dates); `%`, `_` and
-`#` are literal characters, not wildcards. SQL NULL does not match. Paging
-uses a primary-key tie-breaker if the table has one. Without a primary key,
-rows can shift across pages during concurrent updates.
+Select a table or view, then use **Filter column**, **Contains**, **AND column**,
+**AND contains**, **Sort by** and **Direction** above the grid. Both optional
+conditions are combined using **AND**; leaving one blank preserves the
+single-filter workflow. Click **Apply to database**, or click a table column
+heading to change server-side ordering. Results are fetched from PostgreSQL,
+not just filtered within the loaded 100-row page. The API supports the existing
+`filter_column`/`filter` plus optional `filter2_column`/`filter2`, reusing
+the same validated predicates for paging and CSV export. Identifiers must match
+catalog-visible column names; `asc`/`desc` are the only sort directions,
+and each filter value is parameterized and limited to 200 Unicode characters.
+Filters use **case-insensitive literal substring** matching against PostgreSQL's
+text representation (including numbers and dates); `%`, `_` and `#` are
+literal characters, not wildcards. SQL NULL does not match. Paging uses a
+primary-key tie-breaker if the table has one. Without a primary key, rows can
+shift across pages during concurrent updates.
 
 Use **Export filtered CSV** to download up to **10,000 matching rows / 10 MiB**
 from one PostgreSQL read-only transaction snapshot. Export respects the active
@@ -407,7 +412,8 @@ loaded CSV** exports only the currently loaded SQL result page.
 The export uses the configured bearer-token authentication and selected
 database profile; the token is sent in an HTTP header, never in a URL. The
 server does not stream arbitrarily large exports: exports above the stated
-limits, multi-column predicates and bulk CSV import with mapping remain open in
+limits, arbitrary multi-predicate expressions, additional operators/SQL NULL
+criteria and bulk CSV import with mapping remain open in
 [Data Explorer 2.0 issue #71](https://github.com/mycaravam-crypto/datawizz/issues/71).
 
 ## Bounded CSV import and EXPLAIN preview
