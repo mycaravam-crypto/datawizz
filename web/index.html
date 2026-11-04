@@ -1147,7 +1147,7 @@ function svgPart(name,attrs={},content){
  if(content!==undefined)node.textContent=String(content);
  return node;
 }
-let erSvg=null,erBaseWidth=930,erBaseHeight=0,erZoom=1;
+let erSvg=null,erBaseWidth=960,erBaseHeight=0,erZoom=1;
 function erKey(schema,name){return schema+"\u001f"+name}
 function erControls(enabled){
  for(const id of ["er-zoom-in","er-zoom-out","er-zoom-reset","er-fit"])$(id).disabled=!enabled;
@@ -1227,8 +1227,8 @@ async function loadRelationships(){
   const pos=new Map(nodes.map((node,i)=>[node.key,{
     x:12+(i%3)*310,y:20+Math.floor(i/3)*104}]));
   erBaseHeight=Math.ceil(nodes.length/3)*104+32;
-  const svg=svgPart("svg",{viewBox:"0 0 930 "+erBaseHeight,
-    width:930,height:erBaseHeight,role:"group",
+  const svg=svgPart("svg",{viewBox:"0 0 960 "+erBaseHeight,
+    width:960,height:erBaseHeight,role:"group",
     "aria-label":"Interactive PostgreSQL foreign key relationships"});
   const defs=svgPart("defs"),marker=svgPart("marker",{id:"er-arrow",
     viewBox:"0 0 10 10",refX:9,refY:5,markerWidth:5,markerHeight:5,orient:"auto-start-reverse"});
@@ -1239,9 +1239,24 @@ async function loadRelationships(){
    const from=pos.get(erKey(edge.from_schema,edge.from_table)),
     to=pos.get(erKey(edge.to_schema,edge.to_table));
    if(!from||!to){omitted++;continue}
-   const line=svgPart("line",{x1:from.x+140,y1:from.y+30,x2:to.x+140,y2:to.y+30,
+   // Route orthogonal connectors through the gaps between rows and cards.
+   let d;
+   if(from===to){
+    const right=from.x+288;
+    d="M "+right+" "+(from.y+14)+" H "+(right+20)+" V "+(from.y+46)+" H "+right;
+   }else if(from.y===to.y){
+    d=from.x<to.x
+      ?"M "+(from.x+288)+" "+(from.y+30)+" H "+to.x
+      :"M "+from.x+" "+(from.y+30)+" H "+(to.x+288);
+   }else{
+    const down=from.y<to.y;
+    const startY=from.y+(down?60:0),endY=to.y+(down?0:60);
+    const midY=(startY+endY)/2;
+    d="M "+(from.x+144)+" "+startY+" V "+midY+" H "+(to.x+144)+" V "+endY;
+   }
+   const link=svgPart("path",{d,fill:"none",
     stroke:"#8191a6","stroke-width":1.3,"marker-end":"url(#er-arrow)"});
-   line.append(svgPart("title",{},edge.definition));svg.append(line);
+   link.append(svgPart("title",{},edge.definition));svg.append(link);
   }
   for(const node of nodes){
    const {x,y}=pos.get(node.key),name=node.label;
