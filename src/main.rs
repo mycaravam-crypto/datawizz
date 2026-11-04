@@ -1963,6 +1963,26 @@ mod tests {
         assert!(output.starts_with("\u{feff}"));
         assert!(output.contains("\"percent%_# ü\""));
         assert!(!output.contains("\"'=2+2\""), "filter must restrict rows");
+        let compound = ExportRequest {
+            schema: "public".into(),
+            table: "datawizz_csv_export_test".into(),
+            filter_column: Some("label".into()),
+            filter: Some("%_#".into()),
+            filter2_column: Some("id".into()),
+            filter2: Some("1".into()),
+            sort_column: Some("id".into()),
+            sort_dir: Some("asc".into()),
+        };
+        let empty = table_export(State(state.clone()), Query(compound))
+            .await
+            .expect("two-filter snapshot export")
+            .into_response();
+        let empty_bytes = axum::body::to_bytes(empty.into_body(), EXPORT_MAX_BYTES)
+            .await
+            .expect("bounded empty CSV");
+        let empty_csv = std::str::from_utf8(&empty_bytes).unwrap();
+        assert!(!empty_csv.contains("percent%_#"));
+        assert!(empty_csv.contains("id"), "empty filtered exports preserve the CSV header");
 
         let all = table_export(
             State(state.clone()),
@@ -3049,6 +3069,55 @@ mod tests {
         assert_eq!(percent.rows.len(), 1);
         assert_eq!(percent.rows[0][1].as_deref(), Some("Beta%Two"));
         assert_eq!(percent.rows[0][2].as_deref(), Some("f"));
+        let mut compound = page("alpha_", "desc", 0);
+        compound.filter2_column = Some("active".into());
+        compound.filter2 = Some("true".into());
+        let Json(matched) = table_rows(State(state.clone()), Query(compound))
+            .await
+            .expect("two-filter AND");
+        assert_eq!(matched.rows.len(), 2);
+        assert_eq!(matched.rows[0][0].as_deref(), Some("3"));
+        assert_eq!(matched.rows[1][0].as_deref(), Some("1"));
+        let mut second_only = page("", "asc", 0);
+        second_only.filter2_column = Some("active".into());
+        second_only.filter2 = Some("false".into());
+        let Json(filtered) = table_rows(State(state.clone()), Query(second_only))
+            .await
+            .expect("second-only filter");
+        assert_eq!(filtered.rows[0][0].as_deref(), Some("2"));
+        assert_eq!(filtered.rows[1][0].as_deref(), Some("4"));
+        let mut bad_second = page("x", "asc", 0);
+        bad_second.filter2_column = Some("label) OR TRUE--".into());
+        bad_second.filter2 = Some("x".into());
+        assert_eq!(
+            table_rows(State(state.clone()), Query(bad_second))
+                .await
+                .err()
+                .expect("invalid second column must fail")
+                .0,
+            StatusCode::BAD_REQUEST
+        );
+        let mut bad_second = page("x", "asc", 0);
+        bad_second.filter2 = Some("x".into());
+        assert_eq!(
+            table_rows(State(state.clone()), Query(bad_second))
+                .await
+                .err()
+                .expect("unpaired second value must fail")
+                .0,
+            StatusCode::BAD_REQUEST
+        );
+        let mut bad_second = page("x", "asc", 0);
+        bad_second.filter2_column = Some("active".into());
+        bad_second.filter2 = Some("a".repeat(201));
+        assert_eq!(
+            table_rows(State(state.clone()), Query(bad_second))
+                .await
+                .err()
+                .expect("second value size limit")
+                .0,
+            StatusCode::BAD_REQUEST
+        );
         let mut invalid = page("x", "asc", 0);
         invalid.filter_column = Some("label) OR TRUE--".into());
         assert_eq!(
