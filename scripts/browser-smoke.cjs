@@ -291,6 +291,20 @@ const server = http.createServer(async (req, res) => {
     await page.getByRole("button",{name:"Run query",exact:false}).click();
     await page.locator("#server-pager").waitFor({state:"hidden"});
     assert.equal(await page.locator("#server-pager").isVisible(),false,"Free SQL hides server pager");
+    await page.waitForFunction(() => !busy);
+    assert.equal(await page.locator("#browse").isEnabled(),true,
+      "Loading table rows is available again after a successful SQL query");
+    assert.match(await page.locator("#row-action-hint").textContent(),/SQL results are read-only/,
+      "The interface explains why SQL result rows cannot be edited");
+    await page.route("**/api/query",route=>route.fulfill({
+      status:500,contentType:"application/json",body:JSON.stringify({error:"Simulated SQL failure"})
+    }));
+    await page.getByRole("button",{name:/Run query/}).click();
+    await page.getByText("Query failed.").waitFor();
+    await page.waitForFunction(() => !busy);
+    assert.equal(await page.locator("#browse").isEnabled(),true,
+      "Loading table rows remains available after a failed SQL query");
+    await page.unroute("**/api/query");
     await page.evaluate(()=>fetch("/api/delay-browse"));
     await page.locator("#browse").click();
     await page.locator("#filter").fill("");
