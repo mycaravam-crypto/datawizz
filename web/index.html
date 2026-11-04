@@ -199,6 +199,14 @@
 @media(max-width:1160px){.topbar{grid-template-columns:auto 1fr;gap:8px 16px}.topbar .workspace-switcher{grid-row:2;grid-column:1 / -1}.top-actions{justify-self:end}}
 @media(max-width:670px){.topbar{padding:10px 12px;gap:8px}.brand{font-size:17px}.top-actions{gap:6px}.top-actions .environment-tag{display:inline-flex}.connection-control .input{width:clamp(120px,37vw,180px)}.environment-tag{font-size:10px;padding:4px 6px}.topbar .workspace-switcher{display:flex;gap:4px}.topbar .workspace-tab{flex:1;text-align:center}.app-menu>summary{padding:6px 8px}.page-heading h1{font-size:21px}.results-header .result-utilities{justify-content:flex-start}.results-header .filter-bar input{width:150px}#row-actions{padding:9px 12px}.action-menu-panel{right:0}}
 @media(max-width:400px){.topbar{grid-template-columns:1fr}.top-actions{justify-self:stretch;grid-row:2;flex-wrap:wrap}.topbar .workspace-switcher{grid-row:3;grid-column:1}.connection-control{flex:1}.connection-control .input{width:100%}}
+
+/* Task-focused exploration: the data grid is primary when browsing a table. */
+#editor-body[hidden],#object-open-sql[hidden]{display:none!important}
+#object-open-sql{margin-top:12px;width:100%;white-space:normal;line-height:1.4}
+#editor-toggle{margin-left:auto}
+#changes-bar #changes-undo,#changes-bar #changes-redo{background:var(--panel);font-weight:500}
+#row-edit:not(.primary){background:var(--raised);color:var(--text)}
+@media(max-width:670px){#editor-body .toolbar .buttons{justify-content:flex-start}.changes-bar .toolbar-spacer{display:none}}
 </style>
 </head>
 <body>
@@ -224,18 +232,18 @@
 <div class="aside-heading"><span class="eyebrow">Explorer</span><button class="btn small" id="refresh" type="button">↻ Refresh</button></div>
 <label for="filter" class="eyebrow">Filter objects</label><input id="filter" class="input search" placeholder="Search schemas, tables, views…" autocomplete="off">
 <div class="count" id="object-count" aria-live="polite">Loading schemas…</div><nav id="objects" class="tree" aria-label="Database objects"></nav>
-<div class="sidebar-bottom"><div class="eyebrow">Selected object</div><p id="selected" class="note">Select a table or view to inspect columns and prepare a query.</p><div id="columns" class="column-list"></div><button id="browse-table" class="hidden" type="button" disabled hidden aria-hidden="true" tabindex="-1">Legacy table paging</button></div>
+<div class="sidebar-bottom"><div class="eyebrow">Selected object</div><p id="selected" class="note">Select a table or view to inspect columns and prepare a query.</p><div id="columns" class="column-list"></div><button id="object-open-sql" class="btn small" type="button" hidden>Open SELECT in SQL editor</button><button id="browse-table" class="hidden" type="button" disabled hidden aria-hidden="true" tabindex="-1">Legacy table paging</button></div>
 </aside>
 <main class="workbench">
 <div class="page-heading"><div><span class="eyebrow" id="workspace-crumb">Workspace / Query</span><h1 id="workspace-title">SQL Workbench</h1><p class="subtext" id="workspace-description">Explore, query and export from your configured PostgreSQL database.</p></div><span id="status" class="status" role="status" aria-live="polite">Ready</span></div>
 
 <div id="sql-workspace" class="workspace-pane" role="tabpanel" aria-labelledby="workspace-tab-sql">
-<section class="card" aria-labelledby="editor-heading"><div class="card-header"><h2 id="editor-heading" class="card-title">SQL editor</h2><div class="buttons"><button class="btn small" id="copy" type="button">Copy SQL</button><button class="btn small" id="clear" type="button">Clear</button></div></div>
-<div class="tab-strip" id="tabs" role="tablist" aria-label="SQL editor tabs"></div><div class="editor-wrap"><label class="eyebrow" for="sql">Statement</label><textarea id="sql" class="editor" spellcheck="false" aria-label="SQL statement">SELECT current_database(), version();</textarea>
+<section class="card" aria-labelledby="editor-heading"><div class="card-header"><h2 id="editor-heading" class="card-title">SQL editor</h2><button id="editor-toggle" class="btn small" type="button" aria-expanded="true" aria-controls="editor-body">Hide SQL editor</button></div>
+<div id="editor-body"><div class="tab-strip" id="tabs" role="tablist" aria-label="SQL editor tabs"></div><div class="editor-wrap"><label class="eyebrow" for="sql">Statement</label><textarea id="sql" class="editor" spellcheck="false" aria-label="SQL statement">SELECT current_database(), version();</textarea>
 <div id="sql-rich" class="sql-rich" aria-label="Rich SQL editor with highlighting" hidden></div>
 <div id="sql-completion" class="sql-completion" role="listbox" aria-label="SQL suggestions" hidden></div>
 <div class="note" style="margin-top:5px">SQL suggestions: <kbd>Ctrl</kbd> + <kbd>Space</kbd> · from visible PostgreSQL objects · <kbd>Ctrl</kbd> + <kbd>F</kbd> searches in rich editor</div>
-<div class="toolbar"><span class="helper">Execute a single statement · <kbd>Ctrl</kbd> / <kbd>⌘</kbd> + <kbd>Enter</kbd></span><div class="buttons"><button id="explain" class="btn small" type="button" title="Prepare EXPLAIN (FORMAT JSON) without executing SQL">Explain SQL</button><button id="run" class="btn primary" type="button">▶ Run query</button></div></div></div></section>
+<div class="toolbar"><span class="helper">Execute a single statement · <kbd>Ctrl</kbd> / <kbd>⌘</kbd> + <kbd>Enter</kbd></span><div class="buttons"><button class="btn small" id="copy" type="button">Copy SQL</button><button class="btn small" id="clear" type="button">Clear</button><button id="explain" class="btn small" type="button" title="Prepare EXPLAIN (FORMAT JSON) without executing SQL">Explain SQL</button><button id="run" class="btn primary" type="button">▶ Run query</button></div></div></div></div></section>
 <details id="sql-productivity" class="card sql-productivity">
  <summary><span>Query history & saved scripts</span><span class="note" id="sql-history-count">History: 0 · session only</span></summary>
  <div class="sql-productivity-grid">
@@ -260,35 +268,32 @@
   </section>
  </div>
 </details>
-<section class="card results" aria-labelledby="result-heading"><div class="results-header"><div><h2 id="result-heading" class="card-title">Query results</h2><div id="message" class="note" role="status" aria-live="polite">Run a query to view data.</div></div><div class="buttons result-utilities"><label class="filter-bar"><span class="sr-only">Filter</span><input id="result-filter" class="input" type="search" title="Shortcut: Ctrl/⌘ + Shift + F" placeholder="Filter loaded rows" aria-label="Filter loaded result rows"></label><button id="result-filter-clear" type="button" class="btn small" aria-label="Clear result filter" title="Clear filter">×</button><span class="stat" id="row-stat">0 rows</span><span class="stat" id="time-stat">— ms</span><button class="btn small" id="csv" type="button" disabled>↓ Export loaded CSV</button></div></div>
+<section class="card results" aria-labelledby="result-heading"><div class="results-header"><div><h2 id="result-heading" class="card-title">Query results</h2><div id="message" class="note" role="status" aria-live="polite">Run a query to view data.</div></div><div class="buttons result-utilities"><label class="filter-bar"><span class="sr-only">Filter</span><input id="result-filter" class="input" type="search" title="Shortcut: Ctrl/⌘ + Shift + F" placeholder="Filter loaded rows" aria-label="Filter loaded result rows"></label><button id="result-filter-clear" type="button" class="btn small" aria-label="Clear result filter" title="Clear filter">×</button><span class="stat" id="row-stat">0 rows</span><span class="stat" id="time-stat">— ms</span><button class="btn small" id="csv" type="button" disabled title="Export only the currently loaded page, not all database matches">Export loaded page CSV</button></div></div>
 <div id="changes-bar" class="changes-bar" hidden>
   <strong id="changes-count">0 pending changes</strong><span class="note">Staged locally · not saved yet</span><span class="toolbar-spacer"></span>
-  <button id="changes-save" type="button" class="btn primary small">Review &amp; save</button><button id="changes-discard" type="button" class="btn small">Discard changes</button>
+  <button id="changes-save" type="button" class="btn primary small">Review &amp; save</button><button id="changes-discard" type="button" class="btn small">Discard changes</button><button id="changes-undo" type="button" class="btn small" disabled title="Undo staged change">Undo</button><button id="changes-redo" type="button" class="btn small" disabled title="Redo staged change">Redo</button>
 </div>
 <div id="row-actions" class="selection-bar row-toolbar" hidden aria-label="Table row actions">
   <div class="buttons table-basic-actions"><button class="btn small" id="browse" type="button" disabled title="Load rows from the database">↻ Load table rows</button><button class="btn small" id="insert" type="button" disabled>+ Insert row</button></div>
   <span class="toolbar-spacer"></span>
   <div class="buttons table-edit-actions">
-    <button id="row-edit" class="btn small primary" type="button" aria-describedby="row-action-hint" disabled>Edit row</button>
+    <button id="row-edit" class="btn small" type="button" aria-describedby="row-action-hint" disabled>Edit row</button>
     <button id="edit-mode" class="btn small" type="button" aria-pressed="false" aria-describedby="row-action-hint" disabled>Edit cells: Off</button>
     <details id="row-more" class="action-menu"><summary class="btn small" aria-label="More table actions">More actions</summary><div class="action-menu-panel">
       <button id="bulk-toggle" class="btn small" type="button" aria-controls="selection-bar" aria-expanded="false" aria-describedby="row-action-hint" disabled>Bulk edit</button>
       <button id="row-delete" class="btn small" type="button" aria-describedby="row-action-hint" disabled>Delete selected row</button>
-      <div class="menu-divider" aria-hidden="true"></div>
-      <button id="changes-undo" type="button" class="btn small" disabled title="Undo staged change">Undo staged change</button>
-      <button id="changes-redo" type="button" class="btn small" disabled title="Redo staged change">Redo staged change</button>
     </div></details>
   </div>
   <span class="note" id="grid-keyboard-hint" hidden title="Keyboard controls for table cells">Cells: arrows navigate · F2/Enter edit · Tab next · Esc cancel</span>
 </div>
-<div id="row-guidance" class="row-guidance" hidden role="status" aria-live="polite"><strong id="row-guidance-title">Table editing</strong><span id="row-action-hint" class="note">Choose a table to see row editing options.</span></div><details id="table-options" class="table-options" hidden><summary>Filter &amp; sort database rows <span id="table-options-active" class="note" hidden>· Active</span></summary><div id="table-server-controls" class="table-server-controls" hidden aria-label="Server-side table filter and sorting">
+<div id="row-guidance" class="row-guidance" hidden role="status" aria-live="polite"><strong id="row-guidance-title">Table editing</strong><span id="row-action-hint" class="note">Choose a table to see row editing options.</span></div><details id="table-options" class="table-options" hidden><summary>Filter &amp; sort all table rows <span id="table-options-active" class="note" hidden>· Active</span></summary><div id="table-server-controls" class="table-server-controls" hidden aria-label="Server-side table filter and sorting">
 <label class="table-control" for="table-filter-column">Filter column<select id="table-filter-column" class="input" disabled><option value="">No filter</option></select></label>
 <label class="table-control value" for="table-filter-value">Contains (literal text)<input id="table-filter-value" class="input" type="search" maxlength="200" placeholder="Search across all DB rows"></label>
 <label class="table-control" for="table-filter2-column">AND column<select id="table-filter2-column" class="input" disabled><option value="">No second filter</option></select></label>
 <label class="table-control value" for="table-filter2-value">AND contains (literal text)<input id="table-filter2-value" class="input" type="search" maxlength="200" placeholder="Optional second condition"></label>
 <label class="table-control" for="table-sort-column">Sort by<select id="table-sort-column" class="input" disabled><option value="">Primary key</option></select></label>
 <label class="table-control" for="table-sort-dir">Direction<select id="table-sort-dir" class="input"><option value="asc">Ascending</option><option value="desc">Descending</option></select></label>
-<div class="buttons"><button id="table-apply" class="btn small primary" type="button">Apply to database</button><button id="table-reset" class="btn small" type="button">Reset</button><button id="table-export" class="btn small" type="button" disabled>Export filtered CSV</button><button id="table-export-cancel" class="btn small" type="button" hidden>Cancel export</button></div>
+<div class="buttons"><button id="table-apply" class="btn small primary" type="button">Apply to database</button><button id="table-reset" class="btn small" type="button">Reset</button><button id="table-export" class="btn small" type="button" disabled title="Export all matching database rows up to the configured safety limits">Export all matches CSV</button><button id="table-export-cancel" class="btn small" type="button" hidden>Cancel export</button></div>
 <p class="note">Optional second filter combines with the first using AND. Both match literal text case-insensitively; SQL NULL does not match. Sort is database-side with PK tie-breakers. Export uses one PostgreSQL snapshot, up to 10,000 rows / 10 MiB; staged edits are excluded.</p>
 </div></details>
 <div id="selection-bar" class="selection-bar" hidden><span id="selection-count" class="stat">0 selected</span><label class="note" for="bulk-column">Column</label><select id="bulk-column" class="input" style="width:auto"></select><input id="bulk-value" aria-label="Value for selected rows" class="input" style="width:180px" placeholder="New value"><label class="note"><input type="checkbox" id="bulk-null"> SQL NULL</label><button type="button" class="btn small" id="bulk-apply">Apply to selected</button><button type="button" class="btn small" id="bulk-clear">Clear selection</button><span class="note">Up to 20 rows · staged and saved atomically</span></div><div id="output" class="results-content" role="region" aria-label="SQL results table" tabindex="0" aria-live="off"><div class="empty"><strong>No results yet</strong><span>Run a statement or choose a table from the explorer.</span></div></div>
@@ -421,6 +426,12 @@ $("manage-connections").addEventListener("click",()=>{$("app-menu").open=false})
 let objects=[],selected=null,last=null,busy=false,page=0,sortColumn=-1,sortAsc=true,requestId=0,tableMode=false,tableOffset=0,tableHasNext=false,tableOrdered=false,selectedColumns=[],editingRow=null;
 let tabs=[{id:1,name:"Query 1",sql:sql.value}],activeTab=1,nextTab=2;
 function persistTab(){const tab=tabs.find(t=>t.id===activeTab);if(tab)tab.sql=sql.value}
+function setEditorExpanded(expanded){
+ $("editor-body").hidden=!expanded;
+ $("editor-toggle").setAttribute("aria-expanded",String(expanded));
+ text($("editor-toggle"),expanded?"Hide SQL editor":"Show SQL editor");
+}
+$("editor-toggle").onclick=()=>setEditorExpanded($("editor-body").hidden);
 function renderTabs(){
  const strip=$("tabs");strip.replaceChildren();
  for(const tab of tabs){
@@ -448,7 +459,7 @@ function openSqlDraft(statement,name){
  if(busy)return;
  persistTab();
  const tab={id:nextTab,name:name.slice(0,55),sql:statement};
- nextTab++;tabs.push(tab);activeTab=tab.id;sql.value=tab.sql;renderTabs();showWorkspace("sql");sql.focus();
+ nextTab++;tabs.push(tab);activeTab=tab.id;sql.value=tab.sql;renderTabs();showWorkspace("sql");setEditorExpanded(true);sql.focus();
 }
 function addQueryHistory(statement,outcome,duration){
  if(!statement.trim()||statement.length>16000)return; // Never store a truncated/replayable fragment.
@@ -667,7 +678,7 @@ function rowEditBlockReason(){
  if(!tableMode||!last)return busy?"Loading table rows and checking edit availability…":"SQL results are read-only. Select Load table rows to open this table for editing.";
  if(!selectedColumns.length)return "Column metadata is unavailable. Select the table again to retry.";
  if(last.columns.length!==selectedColumns.length)return "Loaded row columns do not match the table metadata. Refresh rows before editing.";
- if(!selectedColumns.some(c=>c.primary_key))return "This table has no primary key. Row editing requires a primary key to identify the correct row safely.";
+ if(!selectedColumns.some(c=>c.primary_key))return "This table has no primary key. Editing or deleting existing rows requires a primary key; inserting may still be possible.";
  return "";
 }
 function updateSelection(){
@@ -686,10 +697,12 @@ function updateSelection(){
  $("edit-mode").setAttribute("aria-pressed",String(editMode&&enabled));
  text($("edit-mode"),"Edit cells: "+(editMode&&enabled?"On":"Off"));
  $("row-edit").disabled=!enabled||!one||!editableFields||busy||pending;
+ $("row-edit").classList.toggle("primary",!$("row-edit").disabled);
  $("row-delete").disabled=!enabled||!one||busy||pending;
  $("bulk-toggle").disabled=!enabled||!count||!editableFields||busy;
  $("bulk-toggle").setAttribute("aria-expanded",String(enabled&&bulkEditorOpen&&count>0));
  $("bulk-apply").disabled=!enabled||!count||!editableFields||busy;
+ $("object-open-sql").disabled=!selected||busy;
  $("grid-keyboard-hint").hidden=!(enabled&&editMode&&hasRows);
  let heading="Editing available",guidance="";
  if(issue){heading="Editing unavailable";guidance=issue}
@@ -697,10 +710,10 @@ function updateSelection(){
  else if(!hasRows){heading="No rows to edit";guidance="This page contains no rows. Insert a row if your connection permits it."}
  else if(pending){heading="Unsaved changes";guidance="Review & save or discard staged edits before using Edit row, Delete or Insert row. You can continue editing cells or use Bulk edit."}
  else if(!editableFields){heading="No editable columns";guidance="All columns belong to the primary key. Row values cannot be changed; deletion is available after selecting one row."}
- else if(count>1){guidance=count+" rows selected. Use More actions → Bulk edit to stage changes, or select just one row to edit or delete."}
- else if(one){guidance="1 row selected. Edit row saves immediately; Edit cells stages changes for Review & save. Find Delete under More actions (confirmation required)."}
- else if(editMode){guidance="Select a row for Edit row or Delete, or press Enter/F2 on a non-key cell to stage a change. Refresh keeps this mode on."}
- else{guidance="Select one row using its checkbox to edit or delete it. Turn on Edit cells only for inline changes."}
+ else if(count>1){heading=count+" rows selected";guidance="Edit row requires exactly one selected row. Use More actions → Bulk edit to stage changes across rows."}
+ else if(one){heading="1 row selected";guidance="Edit row saves immediately; Edit cells stages changes for Review & save. Find Delete under More actions (confirmation required)."}
+ else if(editMode){heading="Inline editing enabled";guidance="Press Enter/F2 on an editable cell to stage a change. Select one row to enable Edit row or Delete."}
+ else{heading="Select a row";guidance="Select exactly one row using its checkbox to enable Edit row or Delete. Turn on Edit cells for inline editing."}
  text($("row-guidance-title"),heading);
  text($("row-action-hint"),guidance);
  for(const id of ["edit-mode","row-edit","row-delete","bulk-toggle"]){
@@ -994,8 +1007,12 @@ $("table-export").onclick=async()=>{
   $("table-export").disabled=!selected||!tableMode;
  }
 };
-async function selectObject(item){if(changes.size&&!confirm("Discard staged changes and change table?"))return;changes.clear();resetEditHistory();updateChanges();resetSelection();editMode=false;++tableRequest;tablePage=null;$("server-pager").hidden=true;last=null;output.replaceChildren();$("csv").disabled=true;selected=item;selectedColumns=[];tableMode=false;text($("result-heading"),item.kind==="table"?"Table rows · "+item.schema+"."+item.name:"Query results");$("result-filter").value="";tableHasNext=false;activeTableQuery={filterColumn:"",filter:"",filter2Column:"",filter2:"",sortColumn:"",sortDir:"asc"};$("table-options-active").hidden=true;$("table-options").open=false;
- $("table-server-controls").hidden=false;$("table-options").hidden=false;$("table-filter-value").value="";$("table-filter2-value").value="";$("table-sort-dir").value="asc";setTableFilterColumns([]);$("table-export").disabled=true;$("browse-table").disabled=false;$("browse").disabled=false;updateSelection();renderObjects();text($("selected"),item.schema+"."+item.name);sql.value="SELECT * FROM "+quoted(item.schema)+"."+quoted(item.name)+" LIMIT 200;";persistTab();sql.focus();const ticket=++requestId;text($("columns"),"Loading columns…");try{const cols=await api("/api/columns?"+new URLSearchParams({schema:item.schema,object:item.name}));if(ticket!==requestId)return;selectedColumns=cols;setTableFilterColumns(cols);$("columns").replaceChildren();for(const c of cols){const row=element("div","column-item");row.append(element("strong","",c.name),document.createTextNode(c.data_type+(c.nullable?" · nullable":" · required")+(c.primary_key?" · PRIMARY KEY":"")));$("columns").append(row)}if(!cols.length)text($("columns"),"No columns visible.");updateSelection();if(item.kind==="table"&&selected===item&&!busy)await browseRows(false)}catch(e){if(ticket===requestId){text($("columns"),e.message);updateSelection()}}}
+async function selectObject(item){if(changes.size&&!confirm("Discard staged changes and change table?"))return;changes.clear();resetEditHistory();updateChanges();resetSelection();editMode=false;++tableRequest;tablePage=null;$("server-pager").hidden=true;last=null;output.replaceChildren();$("csv").disabled=true;selected=item;selectedColumns=[];tableMode=false;setEditorExpanded(item.kind!=="table");$("object-open-sql").hidden=false;text($("result-heading"),item.kind==="table"?"Table rows · "+item.schema+"."+item.name:"Query results");$("result-filter").value="";tableHasNext=false;activeTableQuery={filterColumn:"",filter:"",filter2Column:"",filter2:"",sortColumn:"",sortDir:"asc"};$("table-options-active").hidden=true;$("table-options").open=false;
+ $("table-server-controls").hidden=false;$("table-options").hidden=false;$("table-filter-value").value="";$("table-filter2-value").value="";$("table-sort-dir").value="asc";setTableFilterColumns([]);$("table-export").disabled=true;$("browse-table").disabled=false;$("browse").disabled=false;updateSelection();renderObjects();text($("selected"),item.schema+"."+item.name);const ticket=++requestId;text($("columns"),"Loading columns…");try{const cols=await api("/api/columns?"+new URLSearchParams({schema:item.schema,object:item.name}));if(ticket!==requestId)return;selectedColumns=cols;setTableFilterColumns(cols);$("columns").replaceChildren();for(const c of cols){const row=element("div","column-item");row.append(element("strong","",c.name),document.createTextNode(c.data_type+(c.nullable?" · nullable":" · required")+(c.primary_key?" · PRIMARY KEY":"")));$("columns").append(row)}if(!cols.length)text($("columns"),"No columns visible.");updateSelection();if(item.kind==="table"&&selected===item&&!busy)await browseRows(false)}catch(e){if(ticket===requestId){text($("columns"),e.message);updateSelection()}}}
+$("object-open-sql").onclick=()=>{
+ if(!selected||busy)return;
+ openSqlDraft("SELECT * FROM "+quoted(selected.schema)+"."+quoted(selected.name)+" LIMIT 200;","SELECT "+selected.name);
+};
 $("filter").addEventListener("input",renderObjects);$("refresh").onclick=loadObjects;
 $("copy").onclick=async()=>{try{await navigator.clipboard.writeText(sql.value);info("SQL copied to clipboard.")}catch(e){info("Clipboard unavailable; select the SQL text to copy it.")}};
 $("clear").onclick=()=>{sql.value="";sql.focus()};
