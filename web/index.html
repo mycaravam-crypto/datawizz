@@ -622,8 +622,8 @@ function stageRow(index,original,values){
  else changes.set(index,{original:original.slice(),values:values.slice()});
  updateChanges();renderResults();
 }
-$("changes-undo").onclick=()=>historyStep("undo");
-$("changes-redo").onclick=()=>historyStep("redo");
+$("changes-undo").onclick=()=>{$("row-more").open=false;historyStep("undo")};
+$("changes-redo").onclick=()=>{$("row-more").open=false;historyStep("redo")};
 $("changes-discard").onclick=()=>{if(changes.size&&confirm("Discard all pending changes?"))discardChanges()};
 function reviewCell(value){const span=element("span",value===null?"review-null":"",value===null?"SQL NULL":String(value));return span}
 function showChangesReview(items){
