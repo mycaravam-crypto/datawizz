@@ -744,15 +744,55 @@ async function loadConnections(){
   chooser.disabled=true;info("Unable to load connections: "+e.message);
  }
 }
-$("connection-chooser").onchange=()=>{
+// Fail closed before abandoning unsaved work: a profile must be reachable and
+// its database/role verified before the user is asked to discard the workspace.
+async function probeProfileBeforeSwitch(target){
+ const route=target==="default"?"/api/connection-status":
+  "/profiles/"+encodeURIComponent(target)+"/api/connection-status";
+ const headers=new Headers();
+ if(accessToken)headers.set("Authorization","Bearer "+accessToken);
+ const controller=new AbortController();
+ const timer=setTimeout(()=>controller.abort(),7000);
+ try{
+  const response=await fetch(route,{headers,signal:controller.signal,cache:"no-store"});
+  if(response.status===401){
+   accessToken="";$("auth-area").hidden=false;
+   throw Error("Authentication required. Unlock the API before switching.");
+  }
+  if(!response.ok)throw Error("Target database unavailable (HTTP "+response.status+").");
+  const database=await response.json();
+  if(!database||typeof database.database!=="string"||!database.database||
+     typeof database.role!=="string"||!database.role||
+     typeof database.read_only!=="boolean")
+   throw Error("Target returned invalid connection status.");
+  return database;
+ }catch(error){
+  if(error.name==="AbortError")throw Error("Target connection check timed out.");
+  if(error instanceof TypeError)throw Error("Target database could not be reached.");
+  throw error;
+ }finally{clearTimeout(timer)}
+}
+$("connection-chooser").onchange=async()=>{
  const chooser=$("connection-chooser"),target=chooser.value;
  if(busy||target===activeProfileId){chooser.value=activeProfileId;return}
- if(!confirm("Switch database profile? Unsaved SQL tabs, staged edits, history and loaded metadata will be discarded.")){
-  chooser.value=activeProfileId;return;
- }
- try{sessionStorage.setItem(profileStorageKey,target)}
- catch{chooser.value=activeProfileId;info("Browser session storage is unavailable.");return}
- location.reload();
+ const label=chooser.selectedOptions[0]?.textContent||target;
+ chooser.disabled=true;
+ info("Checking the target PostgreSQL connection before switching…");
+ try{
+  const database=await probeProfileBeforeSwitch(target);
+  if(busy)throw Error("A database operation is still in progress.");
+  const message="Switch to "+label+"?\nVerified database: "+database.database+
+   "\nPostgreSQL role: "+database.role+
+   "\nAccess: "+(database.read_only?"read-only":"writable")+
+   "\n\nUnsaved SQL tabs, staged edits, history and loaded metadata will be discarded.";
+  if(!confirm(message)){chooser.value=activeProfileId;info("Profile switch cancelled; workspace preserved.");return}
+  try{sessionStorage.setItem(profileStorageKey,target)}
+  catch{throw Error("Browser session storage is unavailable.")}
+  location.reload();
+ }catch(error){
+  chooser.value=activeProfileId;
+  info("Profile switch aborted; workspace preserved. "+error.message);
+ }finally{chooser.disabled=false}
 };
 loadConnections();
 function setTheme(theme){document.documentElement.dataset.theme=theme;$("theme").setAttribute("aria-label","Switch to "+(theme==="dark"?"light":"dark")+" theme");text($("theme"),theme==="dark"?"☀ Light":"☾ Dark")}

@@ -278,6 +278,53 @@ const { chromium } = require("playwright");
     await page.unroute("**/api/query");
     await page.locator("#workspace-tab-sql").click();
     await page.locator("#sql").fill("SELECT 'must not cross profile boundaries'");
+    // Preserve a staged database row as well as the unsaved SQL draft on failed switches.
+    await page.waitForFunction(() => !busy);
+    if(await page.locator("#edit-mode").getAttribute("aria-pressed")!=="true"){
+      await page.locator("#edit-mode").click();
+    }
+    await page.locator("#output .editable-cell").first().dblclick();
+    await page.locator("#output .cell-editor").fill("unsaved-switch-draft");
+    await page.locator("#output .cell-editor").press("Enter");
+    await page.locator("#changes-count").getByText("1 pending row").waitFor();
+    const beforeFailureNavigations=navigation.length;
+    const originalStored=await page.evaluate(()=>sessionStorage.getItem("datawizz.profile-id.v1"));
+    // A lost database must not trigger a reload, discard edits or surface DB secrets.
+    await page.route("**/profiles/sandbox/api/connection-status",route=>route.fulfill({
+      status:502,contentType:"application/json",
+      body:JSON.stringify({error:"postgres://secret-user:secret-password@host"})
+    }));
+    await page.locator("#connection-chooser").selectOption("sandbox");
+    await page.locator("#message").getByText(/Profile switch aborted; workspace preserved/).waitFor();
+    assert.equal(await page.locator("#connection-chooser").inputValue(),"default");
+    assert.equal(navigation.length,beforeFailureNavigations,"Unreachable profile must not navigate");
+    assert.equal(await page.evaluate(()=>sessionStorage.getItem("datawizz.profile-id.v1")),originalStored);
+    assert.equal(await page.locator("#sql").inputValue(),"SELECT 'must not cross profile boundaries'");
+    assert.equal(await page.locator("#changes-count").textContent(),"1 pending row");
+    assert(!String(await page.locator("#message").textContent()).includes("secret-password"),
+      "Remote connection diagnostics must not leak secrets");
+    await page.unroute("**/profiles/sandbox/api/connection-status");
+    // Malformed success must not be mistaken for a verified database connection.
+    await page.route("**/profiles/sandbox/api/connection-status",route=>route.fulfill({
+      status:200,contentType:"application/json",body:JSON.stringify({database:null,role:null})
+    }));
+    await page.locator("#connection-chooser").selectOption("sandbox");
+    await page.locator("#message").getByText(/invalid connection status/).waitFor();
+    assert.equal(await page.locator("#connection-chooser").inputValue(),"default");
+    assert.equal(await page.locator("#changes-count").textContent(),"1 pending row");
+    await page.unroute("**/profiles/sandbox/api/connection-status");
+    // A reachable target still requires explicit confirmation before losing state.
+    let cancelledPrompt="";
+    page.once("dialog",dialog=>{cancelledPrompt=dialog.message();return dialog.dismiss()});
+    await page.locator("#connection-chooser").selectOption("sandbox");
+    await page.locator("#message").getByText(/Profile switch cancelled; workspace preserved/).waitFor();
+    assert.match(cancelledPrompt,/Verified database: datawizz_profile_test/);
+    assert.match(cancelledPrompt,/PostgreSQL role: datawizz_test/);
+    assert.match(cancelledPrompt,/Access: read-only/);
+    assert.equal(await page.locator("#connection-chooser").inputValue(),"default");
+    assert.equal(navigation.length,beforeFailureNavigations);
+    assert.equal(await page.locator("#changes-count").textContent(),"1 pending row");
+    // The authorized, confirmed switch discards both unsaved SQL and staged rows.
     page.once("dialog",dialog=>dialog.accept());
     await page.locator("#connection-chooser").selectOption("sandbox");
     await page.locator("#auth-area").waitFor({state:"visible"});
@@ -290,6 +337,7 @@ const { chromium } = require("playwright");
     assert.equal(await page.locator("#connection-chooser").inputValue(),"sandbox");
     assert.match(await page.locator("#profile-environment").textContent(),/READ ONLY/);
     assert(!(await page.locator("#sql").inputValue()).includes("must not cross profile boundaries"));
+    assert.equal(await page.locator("#changes-bar").isVisible(),false,"Switch must clear staged row drafts");
     assert.equal(await page.locator("#sql-history-list [role=listitem]").count(),0);
     await page.locator("#objects").getByRole("button",{name:"Preview public.profile_only"}).waitFor();
     assert.equal(await page.locator("#objects").getByRole("button",{name:/datawizz_browser_e2e/}).count(),0);
