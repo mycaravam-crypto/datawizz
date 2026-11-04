@@ -35,6 +35,9 @@ const server = http.createServer(async (req, res) => {
   } else if (req.url === "/api/test-er-large") {
     largeErFixture=true;
     res.end(JSON.stringify({enabled:true}));
+  } else if (req.url === "/api/test-er-reset") {
+    largeErFixture=false;
+    res.end(JSON.stringify({enabled:false}));
   } else if (req.url === "/api/relationships") {
     const edges=largeErFixture?Array.from({length:80},(_,i)=>({
       from_schema:"public",from_table:"table_"+i%40,
@@ -364,6 +367,9 @@ const server = http.createServer(async (req, res) => {
     await page.keyboard.press("ArrowDown");
     const scrollY=await page.locator("#er-diagram").evaluate(panel=>panel.scrollTop);
     assert(scrollY>0,"Keyboard arrows must pan the viewport on large ER diagrams");
+    await page.evaluate(()=>fetch("/api/test-er-reset"));
+    await page.locator("#er-refresh").click();
+    await page.waitForFunction(()=>document.getElementById("er-status").textContent.startsWith("1 relationships"));
     await page.setViewportSize({width:700,height:800});
     const compactNav=await page.locator(".admin-explorer").boundingBox();
     const compactStage=await page.locator(".admin-stage").boundingBox();
