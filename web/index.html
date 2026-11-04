@@ -272,8 +272,10 @@
 </details>
 <section class="card results" aria-labelledby="result-heading"><div class="results-header"><div><h2 id="result-heading" class="card-title">Query results</h2><div id="message" class="note" role="status" aria-live="polite">Run a query to view data.</div></div><div class="buttons result-utilities"><label class="filter-bar"><span class="sr-only">Filter</span><input id="result-filter" class="input" type="search" title="Shortcut: Ctrl/⌘ + Shift + F" placeholder="Filter loaded rows" aria-label="Filter loaded result rows"></label><button id="result-filter-clear" type="button" class="btn small" aria-label="Clear result filter" title="Clear filter">×</button><span class="stat" id="row-stat">0 rows</span><span class="stat" id="time-stat">— ms</span><button class="btn small" id="csv" type="button" disabled title="Export only the currently loaded page, not all database matches">Export loaded page CSV</button></div></div>
 <div id="changes-bar" class="changes-bar" hidden>
-  <strong id="changes-count">0 pending changes</strong><span class="note">Staged locally · not saved yet</span><span class="toolbar-spacer"></span>
-  <button id="changes-save" type="button" class="btn primary small">Review &amp; save</button><button id="changes-discard" type="button" class="btn small">Discard changes</button><button id="changes-undo" type="button" class="btn small" disabled title="Undo staged change">Undo</button><button id="changes-redo" type="button" class="btn small" disabled title="Redo staged change">Redo</button>
+  <strong id="changes-count">0 pending changes</strong><span class="note">Staged locally · not saved yet</span>
+  <div class="buttons staged-history"><button id="changes-undo" type="button" class="btn small" disabled title="Undo staged change">Undo</button><button id="changes-redo" type="button" class="btn small" disabled title="Redo staged change">Redo</button></div>
+  <span class="toolbar-spacer"></span>
+  <div class="buttons staged-commit"><button id="changes-discard" type="button" class="btn small">Discard changes</button><button id="changes-save" type="button" class="btn primary small">Review &amp; save</button></div>
 </div>
 <div id="row-actions" class="selection-bar row-toolbar" hidden aria-label="Table row actions">
   <div class="buttons table-basic-actions"><button class="btn small" id="browse" type="button" disabled title="Load rows from the database">↻ Load table rows</button><button class="btn small" id="insert" type="button" disabled>+ Insert row</button></div>
