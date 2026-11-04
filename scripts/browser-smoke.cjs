@@ -290,11 +290,19 @@ const server = http.createServer(async (req, res) => {
     await page.locator("#output .cell-editor").press("Enter");
     await page.locator("#changes-count").getByText("1 pending row").waitFor();
     await page.locator("#changes-undo").click();
-    await page.locator("#changes-bar").waitFor({state:"hidden"});
+    await page.locator("#changes-count").getByText("All changes undone").waitFor();
+    assert.equal(await page.locator("#changes-bar").isVisible(),true,
+      "Recovery bar remains visible while Redo is possible");
+    assert.equal(await page.locator("#changes-redo").isEnabled(),true,
+      "Redo must remain accessible after undoing the final staged edit");
     await page.locator("#changes-redo").click();
     await page.locator("#changes-count").getByText("1 pending row").waitFor();
     await page.locator("#changes-undo").click();
-    await page.locator("#changes-bar").waitFor({state:"hidden"});
+    await page.locator("#changes-count").getByText("All changes undone").waitFor();
+    assert.equal(await page.locator("#changes-bar").isVisible(),true,
+      "Recovery bar remains visible while Redo is possible");
+    assert.equal(await page.locator("#changes-redo").isEnabled(),true,
+      "Redo must remain accessible after undoing the final staged edit");
     await cell.focus();
     await cell.press("Enter");
     await page.locator("#output .cell-editor").fill("inline-value");
