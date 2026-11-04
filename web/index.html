@@ -284,10 +284,12 @@
 <div id="row-guidance" class="row-guidance" hidden role="status" aria-live="polite"><strong id="row-guidance-title">Table editing</strong><span id="row-action-hint" class="note">Choose a table to see row editing options.</span></div><details id="table-options" class="table-options" hidden><summary>Filter &amp; sort database rows <span id="table-options-active" class="note" hidden>· Active</span></summary><div id="table-server-controls" class="table-server-controls" hidden aria-label="Server-side table filter and sorting">
 <label class="table-control" for="table-filter-column">Filter column<select id="table-filter-column" class="input" disabled><option value="">No filter</option></select></label>
 <label class="table-control value" for="table-filter-value">Contains (literal text)<input id="table-filter-value" class="input" type="search" maxlength="200" placeholder="Search across all DB rows"></label>
+<label class="table-control" for="table-filter2-column">AND column<select id="table-filter2-column" class="input" disabled><option value="">No second filter</option></select></label>
+<label class="table-control value" for="table-filter2-value">AND contains (literal text)<input id="table-filter2-value" class="input" type="search" maxlength="200" placeholder="Optional second condition"></label>
 <label class="table-control" for="table-sort-column">Sort by<select id="table-sort-column" class="input" disabled><option value="">Primary key</option></select></label>
 <label class="table-control" for="table-sort-dir">Direction<select id="table-sort-dir" class="input"><option value="asc">Ascending</option><option value="desc">Descending</option></select></label>
 <div class="buttons"><button id="table-apply" class="btn small primary" type="button">Apply to database</button><button id="table-reset" class="btn small" type="button">Reset</button><button id="table-export" class="btn small" type="button" disabled>Export filtered CSV</button><button id="table-export-cancel" class="btn small" type="button" hidden>Cancel export</button></div>
-<p class="note">Filters match literal text case-insensitively. Sort is database-side with PK tie-breakers. Export uses one PostgreSQL snapshot, up to 10,000 rows / 10 MiB; server rejects larger downloads without truncation. Staged edits are excluded.</p>
+<p class="note">Optional second filter combines with the first using AND. Both match literal text case-insensitively; SQL NULL does not match. Sort is database-side with PK tie-breakers. Export uses one PostgreSQL snapshot, up to 10,000 rows / 10 MiB; staged edits are excluded.</p>
 </div></details>
 <div id="selection-bar" class="selection-bar" hidden><span id="selection-count" class="stat">0 selected</span><label class="note" for="bulk-column">Column</label><select id="bulk-column" class="input" style="width:auto"></select><input id="bulk-value" aria-label="Value for selected rows" class="input" style="width:180px" placeholder="New value"><label class="note"><input type="checkbox" id="bulk-null"> SQL NULL</label><button type="button" class="btn small" id="bulk-apply">Apply to selected</button><button type="button" class="btn small" id="bulk-clear">Clear selection</button><span class="note">Up to 20 rows · staged and saved atomically</span></div><div id="output" class="results-content" role="region" aria-label="SQL results table" tabindex="0" aria-live="off"><div class="empty"><strong>No results yet</strong><span>Run a statement or choose a table from the explorer.</span></div></div>
 <div id="server-pager" class="server-pager" hidden><button class="btn small" id="server-prev" type="button">← Previous 100</button><span id="server-page-info" class="note"></span><button class="btn small" id="server-next" type="button">Next 100 →</button></div><div class="footer"><span id="result-note" class="note">Only loaded rows can be exported.</span><div class="buttons"><button id="prev" class="btn small" type="button" disabled>← Previous</button><span id="page" class="note">Page —</span><button id="next" class="btn small" type="button" disabled>Next →</button></div></div></section>
@@ -878,11 +880,14 @@ function renderObjects(){
 }
 async function loadObjects(){text($("object-count"),"Loading schemas…");try{objects=await api("/api/schema");renderObjects()}catch(e){objects=[];renderObjects();text($("object-count"),"Explorer unavailable");$("objects").replaceChildren(element("p","error-box",e.message))}}
 // Explicit server table filters. Only catalog-resolved columns and bound values reach SQL.
-let activeTableQuery={filterColumn:"",filter:"",sortColumn:"",sortDir:"asc"};
+let activeTableQuery={filterColumn:"",filter:"",filter2Column:"",filter2:"",sortColumn:"",sortDir:"asc"};
 function tableQueryParams(item,offset,limit,query=activeTableQuery){
  const args=new URLSearchParams({schema:item.schema,table:item.name,offset:String(offset),limit:String(limit)});
  if(query.filter&&query.filterColumn){
   args.set("filter_column",query.filterColumn);args.set("filter",query.filter);
+ }
+ if(query.filter2&&query.filter2Column){
+  args.set("filter2_column",query.filter2Column);args.set("filter2",query.filter2);
  }
  if(query.sortColumn){
   args.set("sort_column",query.sortColumn);args.set("sort_dir",query.sortDir);
@@ -890,31 +895,38 @@ function tableQueryParams(item,offset,limit,query=activeTableQuery){
  return args;
 }
 function setTableFilterColumns(cols){
- for(const id of ["table-filter-column","table-sort-column"]){
+ for(const id of ["table-filter-column","table-filter2-column","table-sort-column"]){
   const control=$(id);control.replaceChildren();
-  const none=element("option","",id==="table-filter-column"?"No filter":"Primary key");
+  const none=element("option","",id==="table-sort-column"?"Primary key":
+   id==="table-filter2-column"?"No second filter":"No filter");
   none.value="";control.append(none);
   for(const col of cols){const option=element("option","",col.name);option.value=col.name;control.append(option)}
   control.disabled=!cols.length;
  }
 }
 function requestedTableQuery(){
- const filter=$("table-filter-value").value;
- const filterColumn=$("table-filter-column").value,sortColumn=$("table-sort-column").value;
- if(filter&&!filterColumn){info("Choose the column you want to filter.");return null}
- return {filterColumn,filter,sortColumn,sortDir:$("table-sort-dir").value};
+ const filter=$("table-filter-value").value,filter2=$("table-filter2-value").value;
+ const filterColumn=$("table-filter-column").value,
+  filter2Column=$("table-filter2-column").value,
+  sortColumn=$("table-sort-column").value;
+ if(filter&&!filterColumn){info("Choose the first filter column.");return null}
+ if(filter2&&!filter2Column){info("Choose the second filter column.");return null}
+ return {filterColumn,filter,filter2Column,filter2,sortColumn,sortDir:$("table-sort-dir").value};
 }
 $("table-apply").onclick=()=>{if(busy||!selected)return;
  const requested=requestedTableQuery();if(requested)browseRows(true,requested);
 };
-$("table-filter-value").addEventListener("keydown",e=>{
- if(e.key==="Enter"){e.preventDefault();$("table-apply").click()}
-});
+for(const id of ["table-filter-value","table-filter2-value"]){
+ $(id).addEventListener("keydown",e=>{
+  if(e.key==="Enter"){e.preventDefault();$("table-apply").click()}
+ });
+}
 $("table-reset").onclick=()=>{
  if(busy||!selected)return;
  $("table-filter-column").value="";$("table-filter-value").value="";
+ $("table-filter2-column").value="";$("table-filter2-value").value="";
  $("table-sort-column").value="";$("table-sort-dir").value="asc";
- browseRows(true,{filterColumn:"",filter:"",sortColumn:"",sortDir:"asc"});
+ browseRows(true,{filterColumn:"",filter:"",filter2Column:"",filter2:"",sortColumn:"",sortDir:"asc"});
 };
 // Authenticated, profile-scoped binary download. Never persist bearer tokens in URLs.
 async function apiCsv(path,signal){
@@ -949,6 +961,10 @@ $("table-export").onclick=async()=>{
  if(activeTableQuery.filter&&activeTableQuery.filterColumn){
   params.set("filter_column",activeTableQuery.filterColumn);params.set("filter",activeTableQuery.filter);
  }
+ if(activeTableQuery.filter2&&activeTableQuery.filter2Column){
+  params.set("filter2_column",activeTableQuery.filter2Column);
+  params.set("filter2",activeTableQuery.filter2);
+ }
  if(activeTableQuery.sortColumn){
   params.set("sort_column",activeTableQuery.sortColumn);
   params.set("sort_dir",activeTableQuery.sortDir);
@@ -978,8 +994,8 @@ $("table-export").onclick=async()=>{
   $("table-export").disabled=!selected||!tableMode;
  }
 };
-async function selectObject(item){if(changes.size&&!confirm("Discard staged changes and change table?"))return;changes.clear();resetEditHistory();updateChanges();resetSelection();editMode=false;++tableRequest;tablePage=null;$("server-pager").hidden=true;last=null;output.replaceChildren();$("csv").disabled=true;selected=item;selectedColumns=[];tableMode=false;text($("result-heading"),item.kind==="table"?"Table rows · "+item.schema+"."+item.name:"Query results");$("result-filter").value="";tableHasNext=false;activeTableQuery={filterColumn:"",filter:"",sortColumn:"",sortDir:"asc"};
- $("table-server-controls").hidden=false;$("table-options").hidden=false;$("table-filter-value").value="";$("table-sort-dir").value="asc";setTableFilterColumns([]);$("table-export").disabled=true;$("browse-table").disabled=false;$("browse").disabled=false;updateSelection();renderObjects();text($("selected"),item.schema+"."+item.name);sql.value="SELECT * FROM "+quoted(item.schema)+"."+quoted(item.name)+" LIMIT 200;";persistTab();sql.focus();const ticket=++requestId;text($("columns"),"Loading columns…");try{const cols=await api("/api/columns?"+new URLSearchParams({schema:item.schema,object:item.name}));if(ticket!==requestId)return;selectedColumns=cols;setTableFilterColumns(cols);$("columns").replaceChildren();for(const c of cols){const row=element("div","column-item");row.append(element("strong","",c.name),document.createTextNode(c.data_type+(c.nullable?" · nullable":" · required")+(c.primary_key?" · PRIMARY KEY":"")));$("columns").append(row)}if(!cols.length)text($("columns"),"No columns visible.");updateSelection();if(item.kind==="table"&&selected===item&&!busy)await browseRows(false)}catch(e){if(ticket===requestId){text($("columns"),e.message);updateSelection()}}}
+async function selectObject(item){if(changes.size&&!confirm("Discard staged changes and change table?"))return;changes.clear();resetEditHistory();updateChanges();resetSelection();editMode=false;++tableRequest;tablePage=null;$("server-pager").hidden=true;last=null;output.replaceChildren();$("csv").disabled=true;selected=item;selectedColumns=[];tableMode=false;text($("result-heading"),item.kind==="table"?"Table rows · "+item.schema+"."+item.name:"Query results");$("result-filter").value="";tableHasNext=false;activeTableQuery={filterColumn:"",filter:"",filter2Column:"",filter2:"",sortColumn:"",sortDir:"asc"};$("table-options-active").hidden=true;$("table-options").open=false;
+ $("table-server-controls").hidden=false;$("table-options").hidden=false;$("table-filter-value").value="";$("table-filter2-value").value="";$("table-sort-dir").value="asc";setTableFilterColumns([]);$("table-export").disabled=true;$("browse-table").disabled=false;$("browse").disabled=false;updateSelection();renderObjects();text($("selected"),item.schema+"."+item.name);sql.value="SELECT * FROM "+quoted(item.schema)+"."+quoted(item.name)+" LIMIT 200;";persistTab();sql.focus();const ticket=++requestId;text($("columns"),"Loading columns…");try{const cols=await api("/api/columns?"+new URLSearchParams({schema:item.schema,object:item.name}));if(ticket!==requestId)return;selectedColumns=cols;setTableFilterColumns(cols);$("columns").replaceChildren();for(const c of cols){const row=element("div","column-item");row.append(element("strong","",c.name),document.createTextNode(c.data_type+(c.nullable?" · nullable":" · required")+(c.primary_key?" · PRIMARY KEY":"")));$("columns").append(row)}if(!cols.length)text($("columns"),"No columns visible.");updateSelection();if(item.kind==="table"&&selected===item&&!busy)await browseRows(false)}catch(e){if(ticket===requestId){text($("columns"),e.message);updateSelection()}}}
 $("filter").addEventListener("input",renderObjects);$("refresh").onclick=loadObjects;
 $("copy").onclick=async()=>{try{await navigator.clipboard.writeText(sql.value);info("SQL copied to clipboard.")}catch(e){info("Clipboard unavailable; select the SQL text to copy it.")}};
 $("clear").onclick=()=>{sql.value="";sql.focus()};
@@ -1095,9 +1111,9 @@ $("row-cancel").onclick=()=>$("row-dialog").close();
 $("row-form").onsubmit=async e=>{e.preventDefault();if(!editingRow)return;const original=editingRow.slice(),values=editingRow.slice();for(const el of $("row-fields").querySelectorAll("input[data-column]")){const i=Number(el.dataset.column);const nullEl=$("row-fields").querySelector('input[data-null-column="'+i+'"]');values[i]=nullEl.checked?null:el.value}
  try{await api("/api/row-change",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(rowPayload(original,values,false))});$("row-dialog").close();await browseRows(false);status("Updated","success");info("Row updated; changes visible immediately.")}catch(err){status(err.status===409?"Edit conflict":"Error",err.status===409?"warning":"error");info(err.status===409?"This row changed in the database. Your edits are still in the editor; review current values before retrying.":"Save failed: "+err.message);if(!$("row-dialog").open)$("row-dialog").showModal()}};
 async function browseRows(clear=true,nextQuery=null){if(!selected||busy)return;if(clear){if(changes.size&&!confirm("Discard pending changes and reload table?"))return;changes.clear();resetEditHistory();updateChanges()}resetSelection();
- if(nextQuery){activeTableQuery=nextQuery;tableOffset=0;$("result-filter").value="";$("table-options-active").hidden=!(nextQuery.filter||nextQuery.sortColumn)}
+ if(nextQuery){activeTableQuery=nextQuery;tableOffset=0;$("result-filter").value="";$("table-options-active").hidden=!(nextQuery.filter||nextQuery.filter2||nextQuery.sortColumn)}
  const item={schema:selected.schema,name:selected.name},ticket=++tableRequest;$("table-options").hidden=false;busy=true;status("Loading","running");updateSelection();if(!last)output.replaceChildren(element("div","empty","Loading table rows…"));try{const result=await api("/api/table-rows?"+tableQueryParams(item,tableOffset,100));if(ticket!==tableRequest||selected?.schema!==item.schema||selected?.name!==item.name)return;tableMode=true;tableHasNext=result.has_next;tableOrdered=result.stable_order;last={columns:result.columns,rows:result.rows,column_types:[]};page=0;sortColumn=-1;renderResults();$("csv").disabled=!result.columns.length;text($("time-stat"),"— ms");info(result.rows.length+" table rows loaded");$("table-export").disabled=!result.columns.length;
- text($("result-note"),tableOrdered?"Database filter/sort active. Export all matching rows up to 1,000; CSV button above exports loaded rows only.":"No primary key: page ordering may change; multi-page export requires a primary key.");status("Completed","success")}catch(e){if(ticket===tableRequest){tableMode=false;last=null;output.replaceChildren(element("div","error-box","Could not load table rows: "+e.message));status("Error","error");info("Table rows could not be loaded. Use Load table rows to retry.")}}finally{busy=false;updateSelection()}}
+ text($("result-note"),tableOrdered?"Database filter/sort active. Snapshot CSV export supports up to 10,000 rows / 10 MiB; loaded CSV exports only the current rows.":"No primary key: paging may shift during concurrent updates. Snapshot CSV export is bounded to 10,000 rows / 10 MiB.");status("Completed","success")}catch(e){if(ticket===tableRequest){tableMode=false;last=null;output.replaceChildren(element("div","error-box","Could not load table rows: "+e.message));status("Error","error");info("Table rows could not be loaded. Use Load table rows to retry.")}}finally{busy=false;updateSelection()}}
 $("browse").onclick=()=>{tableOffset=0;browseRows()};
 $("prev").onclick=()=>{if(tableMode){tableOffset=Math.max(0,tableOffset-100);browseRows()}else if(page>0){page--;renderResults()}};
 $("next").onclick=()=>{if(tableMode){if(tableHasNext){tableOffset+=100;browseRows()}}else if(last&&page<Math.ceil(last.rows.length/pageSize)-1){page++;renderResults()}};
