@@ -1992,7 +1992,10 @@ mod tests {
             .expect("bounded empty CSV");
         let empty_csv = std::str::from_utf8(&empty_bytes).unwrap();
         assert!(!empty_csv.contains("percent%_#"));
-        assert!(empty_csv.contains("id"), "empty filtered exports preserve the CSV header");
+        assert!(
+            empty_csv.contains("id"),
+            "empty filtered exports preserve the CSV header"
+        );
 
         let all = table_export(
             State(state.clone()),
