@@ -884,7 +884,9 @@ function setTheme(theme){document.documentElement.dataset.theme=theme;$("theme")
 setTheme("dark");
 $("theme").onclick=()=>{setTheme(document.documentElement.dataset.theme==="dark"?"light":"dark");$("app-menu").open=false};
 function renderObjects(){
- const filter=$("filter").value.toLocaleLowerCase().trim(),list=$("objects");list.replaceChildren();
+ const filter=$("filter").value.toLocaleLowerCase().trim(),list=$("objects");
+ const focusedLabel=list.contains(document.activeElement)?document.activeElement.getAttribute("aria-label"):null;
+ list.replaceChildren();
  const matching=objects.filter(o=>(o.schema+" "+o.name+" "+o.kind).toLocaleLowerCase().includes(filter));
  text($("object-count"),matching.length+" of "+objects.length+" objects");
  const grouped=new Map();for(const o of matching){if(!grouped.has(o.schema))grouped.set(o.schema,[]);grouped.get(o.schema).push(o)}
@@ -894,6 +896,10 @@ function renderObjects(){
   list.append(group);
  }
  if(!matching.length)list.append(element("p","note",objects.length?"No matching objects.":"No readable objects found."));
+ if(focusedLabel){
+  const restored=[...list.querySelectorAll("button.object")].find(b=>b.getAttribute("aria-label")===focusedLabel);
+  restored?.focus({preventScroll:true});
+ }
 }
 async function loadObjects(){text($("object-count"),"Loading schemas…");try{objects=await api("/api/schema");renderObjects()}catch(e){objects=[];renderObjects();text($("object-count"),"Explorer unavailable");$("objects").replaceChildren(element("p","error-box",e.message))}}
 // Explicit server table filters. Only catalog-resolved columns and bound values reach SQL.
