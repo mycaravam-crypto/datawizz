@@ -235,6 +235,8 @@ const server = http.createServer(async (req, res) => {
       "Selecting a table focuses the results workspace, not the SQL editor");
     assert.equal(await page.locator("#sql").evaluate(el=>document.activeElement===el),false,
       "Selecting a table does not unexpectedly move keyboard focus to SQL");
+    assert.equal(await page.locator("#objects .object.selected").evaluate(el=>document.activeElement===el),true,
+      "Selection rerender must retain keyboard focus on the selected explorer object");
     assert.equal(await page.locator("#row-edit").evaluate(el=>el.classList.contains("primary")),false,
       "A disabled Edit row action is not presented as the primary action");
     assert.match(await page.locator("#row-action-hint").textContent(),/Select exactly one row/);
