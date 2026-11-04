@@ -176,7 +176,7 @@
 .topbar .workspace-tab.active{border-color:var(--border);border-bottom-color:var(--border);background:var(--raised);color:var(--text)}
 .top-actions{display:flex;gap:10px;align-items:center;min-width:0}.connection-control{display:flex;flex-direction:column;gap:2px;min-width:0}
 .connection-control .eyebrow{font-size:10px;letter-spacing:.06em}.connection-control .input{width:clamp(145px,16vw,230px);max-width:230px;min-height:34px;padding:5px 8px}
-.environment-tag{flex-shrink:0;font-size:11px;padding:5px 8px;color:var(--text)}
+.environment-tag{display:inline-flex;flex-shrink:0;font-size:11px;padding:5px 8px;color:var(--text)}
 .app-menu,.action-menu{position:relative;flex-shrink:0}.app-menu>summary,.action-menu>summary{list-style:none;cursor:pointer;white-space:nowrap}
 .app-menu>summary::-webkit-details-marker,.action-menu>summary::-webkit-details-marker{display:none}
 .app-menu[open]>summary,.action-menu[open]>summary{background:var(--accent-bg);border-color:var(--accent);color:var(--accent)}
@@ -197,7 +197,7 @@
 .table-options .table-server-controls{border-top:1px solid var(--border);border-bottom:0}.table-options .table-server-controls .note{font-size:11px}
 .changes-bar{padding:10px 16px;gap:8px}.changes-bar .note{margin-right:auto}
 @media(max-width:1160px){.topbar{grid-template-columns:auto 1fr;gap:8px 16px}.topbar .workspace-switcher{grid-row:2;grid-column:1 / -1}.top-actions{justify-self:end}}
-@media(max-width:670px){.topbar{padding:10px 12px;gap:8px}.brand{font-size:17px}.top-actions{gap:6px}.connection-control .input{width:clamp(120px,37vw,180px)}.environment-tag{font-size:10px;padding:4px 6px}.topbar .workspace-switcher{display:flex;gap:4px}.topbar .workspace-tab{flex:1;text-align:center}.app-menu>summary{padding:6px 8px}.page-heading h1{font-size:21px}.results-header .result-utilities{justify-content:flex-start}.results-header .filter-bar input{width:150px}#row-actions{padding:9px 12px}.action-menu-panel{right:0}}
+@media(max-width:670px){.topbar{padding:10px 12px;gap:8px}.brand{font-size:17px}.top-actions{gap:6px}.top-actions .environment-tag{display:inline-flex}.connection-control .input{width:clamp(120px,37vw,180px)}.environment-tag{font-size:10px;padding:4px 6px}.topbar .workspace-switcher{display:flex;gap:4px}.topbar .workspace-tab{flex:1;text-align:center}.app-menu>summary{padding:6px 8px}.page-heading h1{font-size:21px}.results-header .result-utilities{justify-content:flex-start}.results-header .filter-bar input{width:150px}#row-actions{padding:9px 12px}.action-menu-panel{right:0}}
 @media(max-width:400px){.topbar{grid-template-columns:1fr}.top-actions{justify-self:stretch;grid-row:2;flex-wrap:wrap}.topbar .workspace-switcher{grid-row:3;grid-column:1}.connection-control{flex:1}.connection-control .input{width:100%}}
 </style>
 </head>
@@ -695,8 +695,8 @@ function updateSelection(){
  else if(!hasRows){heading="No rows to edit";guidance="This page contains no rows. Insert a row if your connection permits it."}
  else if(pending){heading="Unsaved changes";guidance="Review & save or discard staged edits before using Edit row, Delete or Insert row. You can continue editing cells or use Bulk edit."}
  else if(!editableFields){heading="No editable columns";guidance="All columns belong to the primary key. Row values cannot be changed; deletion is available after selecting one row."}
- else if(count>1){guidance=count+" rows selected. Use Bulk edit for a staged change, or select exactly one row for Edit row or Delete."}
- else if(one){guidance="1 row selected. Edit row saves immediately; Edit cells stages changes for Review & save. Delete requires confirmation."}
+ else if(count>1){guidance=count+" rows selected. Use More actions → Bulk edit to stage changes, or select just one row to edit or delete."}
+ else if(one){guidance="1 row selected. Edit row saves immediately; Edit cells stages changes for Review & save. Find Delete under More actions (confirmation required)."}
  else if(editMode){guidance="Select a row for Edit row or Delete, or press Enter/F2 on a non-key cell to stage a change. Refresh keeps this mode on."}
  else{guidance="Select one row using its checkbox to edit or delete it. Turn on Edit cells only for inline changes."}
  text($("row-guidance-title"),heading);
