@@ -274,6 +274,9 @@ const server = http.createServer(async (req, res) => {
     await page.unroute("**/api/row-change");
     await page.locator("#server-next").click();
     await page.locator("#server-page-info").getByText(/Database rows 101/).waitFor();
+    await page.waitForFunction(() => !busy);
+    assert.equal(await page.locator("#browse").isEnabled(),true,
+      "Refresh rows is re-enabled after legacy server paging completes");
     await page.evaluate(()=>fetch("/api/test-conflict"));
     await page.locator("#browse").click();
     await page.waitForFunction(() => !busy);
